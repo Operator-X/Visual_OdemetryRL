@@ -131,3 +131,8 @@ writeup/      Course report + paper draft
   crash (warpAffine OOB read). Pipeline test: every variant trained 20k steps + evaluated (results/tables/pilot_*).
   EuRoC not downloaded yet (ETH Research Collection rate-limited us; 3 large zips). The TartanAir held-out set
   (3 trajs) is too noisy for real comparisons.
+- 2026-09-27: pilot2 = all variants, 20k steps, obs_rms_warmup_steps=200, 6 val trajs, 1 seed, 1 repeat, both argmax and
+  stochastic eval (results/tables/pilot2_*, results/figures/pilot2_*). Still far too short for conclusions. Early signals:
+  keyframe_paper (5e-3) collapses to ~no keyframes again (2/2 pilots) -> 34 failures/traj; failure_penalty,
+  normalized_error and gamma_0.99 learn MORE keyframes (0.65-0.72), and failure_penalty has the fewest failures
+  (6.0 vs 9.7/traj stochastic). Mean ATE is dominated by 2 westerndesert trajectories (~10 m); use per-trajectory/median.
