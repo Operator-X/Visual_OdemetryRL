@@ -1,6 +1,7 @@
 # Baseline = the authors' released setup (reference/rl_vo/config/config.yaml), scaled to one Mac.
 # Deviations from the authors (all forced by compute): n_envs 100 -> 12, total_timesteps 25M -> pilot budget,
 # PPO batch = n_steps * n_envs = 3000 (authors: full batch of 25000), local TartanAir subset (3 Easy scenes).
+# Bug fix vs authors (on by default): env.fix_reset_gt_indexing (GT re-initialization after a failure was mis-indexed).
 seed: 0
 n_envs: 12
 torch_threads: 4
@@ -47,3 +48,4 @@ env:
   frame_stack: 1
   threshold_action: false
   augment: false
+  fix_reset_gt_indexing: true    # ON by default (our fix of the reference GT re-init indexing bug, docs/modifications.md); false = authors

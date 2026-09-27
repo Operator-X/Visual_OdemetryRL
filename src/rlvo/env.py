@@ -52,6 +52,13 @@ class EnvConfig:
     frame_stack: int = 1
     threshold_action: bool = False
     augment: bool = False
+    fix_reset_gt_indexing: bool = False  # reference bug: GT re-init after a failure reads env i's GT for the i-th reset env
+
+
+def _invalid_gt(gt):
+    """Rows marked as 'no ground truth' (all -1, TUM floor) or with a non-unit quaternion."""
+    q = np.linalg.norm(gt[:, 3:7], axis=1)
+    return np.all(gt == -1, axis=1) | (np.abs(q - 1.0) > 1e-3)
 
 
 class RLVOEnv(VecSVOEnv):
@@ -118,17 +125,56 @@ class RLVOEnv(VecSVOEnv):
     def svo_step(self, images, action, timestamps, use_RL_actions, use_gt_init_poses, gt_init_poses=None):
         if gt_init_poses is not None and gt_init_poses.ndim == 3:
             gt_init_poses = gt_init_poses[:, 0, :]
+        if gt_init_poses is not None:
+            # [rlvo] never GT-initialize on a frame without GT (TUM floor marks those with -1; SVO aborts on the
+            # resulting non-unit quaternion). The env then waits/initializes on its own, as without GT init.
+            use_gt_init_poses = np.logical_and(use_gt_init_poses, ~_invalid_gt(gt_init_poses))
         poses, observations, dones = super().svo_step(images, action, timestamps, use_RL_actions,
                                                       use_gt_init_poses, gt_init_poses)
         self.last_raw_since_kf = observations[:, 1].copy()  # raw "frames since last keyframe" (0 = new keyframe)
         return poses, self._reorder(observations), dones
 
     def reset_dones(self, dones, images, action, poses, observations, info, use_gt_initialization, gt_init_poses=None):
-        poses, observations, info = super().reset_dones(dones, images, action, poses, observations, info,
-                                                        use_gt_initialization, gt_init_poses)
-        m = dones.astype(bool)
-        if self.n_extra and m.any():  # rows written by reset_dones come straight from C++
-            observations[m] = self._reorder(observations[m])
+        """Reimplementation of the reference reset_dones (svo_wrapper.py) with two fixes.
+
+        Always: no GT initialization from a frame without GT (crash guard).
+        fix_reset_gt_indexing: the reference passes the GT flags/poses for ALL envs while every other array holds only
+        the reset envs; the C++ side indexes all of them with the packed index i, so the i-th reset env reads env i's
+        GT. With the switch on, flags/poses are packed like the other arrays. Off = reference behaviour.
+        """
+        dones_mask = dones.astype("bool")
+        nr_resets = int(dones.sum())
+        reset_idx = np.nonzero(dones_mask)[0].astype(np.float64)
+        self.env.reset(reset_idx)
+        for buf in (self.timestamps, self.env_steps):
+            buf[dones_mask] = 0
+        for buf in (self.positions, self.gt_positions, self.positions_scale, self.gt_positions_scale, self.scale_buffer):
+            buf[dones_mask] = 0
+        reset_poses = np.zeros([nr_resets, 16], dtype=np.float64)
+        reset_observations = np.zeros([nr_resets, self.agent_obs_dim], dtype=np.float64)
+        reset_dones_array = np.zeros([nr_resets], dtype=np.float64)
+        reset_stages = np.zeros([nr_resets], dtype=np.float64)
+        reset_runtime = np.zeros([nr_resets], dtype=np.float64)
+        reset_use_RL_actions = np.zeros([nr_resets], dtype=np.float64)
+
+        if not use_gt_initialization or gt_init_poses is None:
+            use_gt = np.zeros([self.num_envs], dtype=np.float64)
+            gt = -np.ones([self.num_envs, 7], dtype=np.float64)
+        elif self.cfg.fix_reset_gt_indexing:
+            gt = np.ascontiguousarray(gt_init_poses[dones_mask])                      # packed like the rest
+            use_gt = (~_invalid_gt(gt)).astype(np.float64)
+        else:                                                                           # reference semantics
+            gt = np.ascontiguousarray(gt_init_poses)
+            use_gt = np.zeros([self.num_envs], dtype=np.float64)
+            use_gt[dones_mask] = 1.0
+            use_gt[_invalid_gt(gt)] = 0.0                                               # crash guard (row actually read)
+
+        self.env.env_step(reset_idx, images[dones_mask, :, :, :], self.timestamps[dones_mask], action[dones_mask],
+                          reset_use_RL_actions, reset_poses, reset_observations, reset_dones_array, reset_stages,
+                          reset_runtime, use_gt, gt)
+        poses[dones_mask] = reset_poses
+        observations[dones_mask] = self._reorder(reset_observations)   # rows come straight from C++
+        self.svo_stages[dones_mask] = reset_stages.astype('int')
         return poses, observations, info
 
     def extract_next_poses(self, gt_poses):

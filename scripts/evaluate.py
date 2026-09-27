@@ -25,25 +25,33 @@ from rlvo.train import env_config, load_config, make_policy_kwargs, set_svo_thre
 DATASETS = {
     "tartanair": dict(dir="data/TartanAir", params="tartan_train.yaml", calib="data/calibration/tartan_pinhole.yaml"),
     "euroc": dict(dir="data/EuRoC", params="euroc.yaml", calib="data/calibration/euroc_mono.yaml"),
+    # STANDARD for TUM: tartan_test.yaml + quality_min_fts 25 (our small grid search, scripts/svo_param_search.py;
+    # the paper's SVO baseline was grid-searched too). Used for SVO rules AND RL agents.
+    "tum": dict(dir="data/TUM-RGBD", params="tum_tuned.yaml", calib="data/calibration/tum.yaml"),
+    # authors' untuned file (their config_eval.yaml uses tartan_test.yaml for TUM-RGBD)
+    "tum_default": dict(dir="data/TUM-RGBD", params="tartan_test.yaml", calib="data/calibration/tum.yaml"),
 }
 
 _glog = [True]
 
 
-def make_val_env(cfg, dataset):
+def make_val_env(cfg, dataset, data_dir=None):
     set_svo_threads(cfg)
     d = DATASETS[dataset]
-    data = str(ROOT / d["dir"])
+    data = str(ROOT / (data_dir or d["dir"]))
     extra_val = []
     if dataset == "tartanair":
         from rlvo.data import split_trajectories
         extra_val = list(cfg.data.get("extra_val_trajs", []))
         n = len(split_trajectories(data, extra_val)[1])
     else:
-        from dataloader.euroc_loader import test_split
-        n = sum(1 for s in test_split if (Path(data) / s).is_dir())
+        mod = __import__("dataloader.euroc_loader" if dataset == "euroc" else "dataloader.tum_loader",  # tum, tum_default
+                         fromlist=["test_split"])
+        n = sum(1 for s in mod.test_split if (Path(data) / s).is_dir())
+        if n == 0:
+            raise SystemExit(f"no {dataset} sequences found in {data}")
     env = RLVOEnv(str(rlvo.SVO_PARAMS / d["params"]), str(ROOT / d["calib"]), data, n, 'val', env_config(cfg),
-                  initialize_glog=_glog[0], dataset=dataset, extra_val=extra_val)
+                  initialize_glog=_glog[0], dataset=dataset.split("_")[0], extra_val=extra_val)
     _glog[0] = False
     return env
 
@@ -64,6 +72,7 @@ def main():
     ap.add_argument("--checkpoint", default="final")
     ap.add_argument("--repeats", type=int, default=3)
     ap.add_argument("--out-tag", default="default", help="results go to results/eval/<dataset>/<out-tag>/")
+    ap.add_argument("--data-dir", default=None, help="override the dataset folder (e.g. a folder of complete sequences)")
     ap.add_argument("--stochastic", action="store_true",
                     help="sample actions instead of argmax (writes to <out-tag>_stoch)")
     args = ap.parse_args()
@@ -76,7 +85,7 @@ def main():
 
     for name, run in jobs:
         cfg = load_config(ROOT / "configs/base.yaml") if run is None else OmegaConf.load(run / "config.yaml")
-        env = make_val_env(cfg, args.dataset)
+        env = make_val_env(cfg, args.dataset, args.data_dir)
         policy = None if run is None else load_policy(run, env, args.checkpoint)
         rows = []
         for rep in range(args.repeats):

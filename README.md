@@ -17,7 +17,8 @@ The project is a course project, with the goal of a paper. It runs **natively on
 | Training / evaluation / comparison / plotting pipeline | ✅ |
 | 11 proposed modifications, each a config switch | ✅ implemented, tested at small scale |
 | Small-scale pilot comparisons (20k steps) | ✅ pipeline validated, early signals only |
-| EuRoC / TUM-RGBD evaluation | ⏳ data not downloaded yet |
+| TUM-RGBD: SVO rules reproduce the paper's SVO row | ✅ 7/8 sequences finished, 8% mean deviation (tuned SVO settings) |
+| EuRoC evaluation | ⏳ download blocked by the host's rate limit |
 | Full-length training runs (multi-seed) | ⏳ not started |
 
 ## What we changed relative to the authors
@@ -44,8 +45,23 @@ critic observations exactly (`tests/test_env.py`, tolerance 1e-12). Details and 
   but `INT_MAX` on ARM (overflows past it). The result was an out-of-bounds read and a SIGBUS during relocalization.
 - Two OpenMP runtimes in one process (PyTorch + Homebrew OpenCV), which aborted at import.
 - pybind11 rejected a strided pose array that the reference code passes during GT initialization.
+- **Reference bug: GT re-initialization after a tracking failure used another environment's ground truth.** It created
+  cascades of spurious failures (TUM, SVO rules: 46 -> 4 failures per run with the fix). Fixed, on by default.
 - The reference PPO only switches on observation normalization after 10 PPO iterations, so short runs never normalize.
   Fixed with an optional warm-up (`obs_rms_warmup_steps`).
+
+## Validation on real data (TUM-RGBD)
+SVO with its own rules (no RL), GT initialization, 3 repeats, vs the paper's Table 2 SVO row. One setting changed from
+the authors' TUM file (`quality_min_fts` 40 -> 25, found by `scripts/svo_param_search.py`; the paper's baseline was
+grid-searched too). The result is saved as `svo_env/param/tum_tuned.yaml` and is our standard for TUM.
+
+| seq | ours [m] | paper SVO [m] | | seq | ours [m] | paper SVO [m] |
+|---|---|---|---|---|---|---|
+| desk | 0.647 | 0.681 | | room | 0.817 | 0.805 |
+| desk2 | 0.880 | 0.898 | | rpy | 0.055 | 0.053 |
+| plant | 0.259 | 0.320 | | teddy | 0.698 | 0.769 |
+| xyz | 0.066 | 0.057 | | 360 | fails once/run | 0.186 |
+| floor | fails | fails | | | | |
 
 ## Early findings (small scale, not conclusions)
 Pilot: 20k training steps per variant (<0.1% of the paper's budget), 1 seed, 6 held-out TartanAir trajectories.
@@ -105,11 +121,12 @@ CLAUDE.md             working notes and conventions for this project
 ```
 
 ## Deviations from the authors (compute)
-100 parallel envs -> 12. PPO batch 25,000 -> 3,000 (still full batch). All of TartanAir -> 3 Easy scenes
+100 parallel envs -> 12. PPO batch 25,000 -> 3,000 (still full batch). A bug in the reference re-initialization after
+tracking failures is fixed by default (`env.fix_reset_gt_indexing`). All of TartanAir -> 3 Easy scenes
 (18 train / 6 held-out trajectories). Short pilot budgets so far. SVO threads 8 -> 12.
 
 ## Next steps
-1. Download EuRoC (the paper's main real-world benchmark) and evaluate there.
+1. Download EuRoC (the paper's main real-world benchmark; the ETH host currently rate-limits us) and evaluate there.
 2. Choose a coverage-aware headline metric for the paper.
 3. Multi-seed runs (200k–1M steps) of the baseline and the most promising variants.
 4. Larger extensions: recurrent policy, other VO backends.

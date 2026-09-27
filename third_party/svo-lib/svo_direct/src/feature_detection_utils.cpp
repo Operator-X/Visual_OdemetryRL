@@ -1,3 +1,5 @@
+#include <cstdlib>
+#include <string>
 // This file is part of SVO - Semi-direct Visual Odometry.
 //
 // Copyright (C) 2014 Christian Forster <forster at ifi dot uzh dot ch>
@@ -162,14 +164,25 @@ void fastDetector(
     fast::fast_corner_detect_10_sse2(
           (fast::fast_byte*) img_pyr[level].data, img_pyr[level].cols,
           img_pyr[level].rows, img_pyr[level].step, threshold, fast_corners);
-#elif HAVE_FAST_NEON
-    fast::fast_corner_detect_9_neon(
-          (fast::fast_byte*) img_pyr[level].data, img_pyr[level].cols,
-          img_pyr[level].rows, img_pyr[level].step, threshold, fast_corners);
 #else
-    fast::fast_corner_detect_10(
-          (fast::fast_byte*) img_pyr[L].data, img_pyr[L].cols,
-          img_pyr[L].rows, img_pyr[L].step, threshold, fast_corners);
+    // [rlvo] x86 uses FAST-10 (SSE2) but the ARM build used FAST-9 (NEON): a different corner criterion.
+    // RLVO_FAST_VARIANT=10 selects the portable FAST-10 (same detector as the authors' x86 machines).
+    static const bool rlvo_use_fast10 = [] {
+      const char* v = std::getenv("RLVO_FAST_VARIANT");
+      return v != nullptr && std::string(v) == "10";
+    }();
+  #if HAVE_FAST_NEON
+    if (!rlvo_use_fast10) {
+      fast::fast_corner_detect_9_neon(
+            (fast::fast_byte*) img_pyr[level].data, img_pyr[level].cols,
+            img_pyr[level].rows, img_pyr[level].step, threshold, fast_corners);
+    } else
+  #endif
+    {
+      fast::fast_corner_detect_10(   // [rlvo] was img_pyr[L] (undefined) in the original fallback branch
+            (fast::fast_byte*) img_pyr[level].data, img_pyr[level].cols,
+            img_pyr[level].rows, img_pyr[level].step, threshold, fast_corners);
+    }
 #endif
     std::vector<int> scores, nm_corners;
     fast::fast_corner_score_10((fast::fast_byte*) img_pyr[level].data, img_pyr[level].step,

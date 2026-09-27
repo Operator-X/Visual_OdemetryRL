@@ -16,6 +16,7 @@ Compare: `scripts/compare.py --tag <tag>` writes `results/tables/<tag>_<dataset>
 | PPO batch | full batch, 250 x 100 = 25,000 | full batch, 250 x 12 = 3,000 | keeps n_steps (the GAE horizon) and full-batch updates |
 | Training data | all of TartanAir (337 seqs) | 3 Easy scenes, 21 train trajectories | disk and download time |
 | Keyframe penalty | 1e-4 in code, 5e-3 in paper | 1e-4 (code) | replicate the released code; the paper value is a variant |
+| GT re-initialization after a failure | mis-indexed (bug, see below) | **fixed** (`env.fix_reset_gt_indexing: true`) | the bug creates cascades of spurious failures (TUM: 46 -> 4 per run); first-segment ATE unaffected |
 
 ## Reward
 
@@ -112,3 +113,5 @@ Compare: `scripts/compare.py --tag <tag>` writes `results/tables/<tag>_<dataset>
 | **ARM-only out-of-bounds read in `warpAffine`** during relocalization: float->int conversion of inf saturates to INT_MAX on ARM (x86 gives INT_MIN, which the check catches), then `xi+1` overflows and passes the bounds check | SIGBUS mid-training | NaN/inf-safe float bounds check before the conversion (`patch_warp.cpp`) |
 | NumPy 2 removed `np.Inf` | import error | shim in `rlvo/__init__.py` |
 | TartanLoader needs #envs <= #train trajectories | bare `StopIteration` | checked with a clear message in our scripts |
+| **Reference bug: GT re-initialization after a failure uses the wrong env's GT.** `reset_dones` passes images/actions for the reset envs only (packed) but GT flags/poses for ALL envs; C++ indexes all with the packed index, so the i-th reset env reads env i's GT | after a real failure SVO re-initializes without (or with wrong) GT, emitting a cascade of spurious "failures". TUM, SVO rules: 46.3 failures/run -> 4.0 with the fix. First-segment ATE unaffected | `env.fix_reset_gt_indexing: true` packs flags/poses correctly (off = reference behaviour) |
+| GT init on frames without GT (TUM floor marks them -1) | SVO aborts: non-unit quaternion check | always on: such frames are never used for GT init |

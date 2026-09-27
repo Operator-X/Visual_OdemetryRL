@@ -136,3 +136,41 @@ writeup/      Course report + paper draft
   keyframe_paper (5e-3) collapses to ~no keyframes again (2/2 pilots) -> 34 failures/traj; failure_penalty,
   normalized_error and gamma_0.99 learn MORE keyframes (0.65-0.72), and failure_penalty has the fewest failures
   (6.0 vs 9.7/traj stochastic). Mean ATE is dominated by 2 westerndesert trajectories (~10 m); use per-trajectory/median.
+- 2026-09-27: TUM-RGBD download (TUM server ~150 KB/s at first, faster later; `scripts/download_tum.sh`). EuRoC blocked:
+  the ETH Research Collection rate-limits our IP (HTTP 429 even for a single browser-like request). `scripts/download_euroc.sh`
+  is ready; retry later or download via a browser into data/_zips/euroc/.
+- 2026-09-27: **Validation on real data:** our SVO heuristics on TUM (GT init, 3 repeats) match the paper's Table 2 SVO
+  row within 5%: 360 0.196 vs 0.186, desk 0.647 vs 0.681, desk2 0.880 vs 0.898 (paper RL-SVO: 0.189 / 0.556 / 0.755).
+  TUM uses `tartan_test.yaml` params (as the authors' config_eval.yaml). `scripts/evaluate.py --dataset tum [--data-dir]`.
+- 2026-09-27: **Full TUM-RGBD check** (SVO heuristics, 9 seqs x 3 repeats, results/eval/tum/tum_full): on the 5 fully
+  tracked seqs we are within -19..+16% of the paper's SVO row (desk -5%, desk2 -2%, teddy -9%, plant -19%, xyz +16% = 9 mm).
+  floor fails in both. But our SVO LOSES TRACKING on 360 (1x), room (23x), rpy (15x), where the paper's SVO finishes.
+  Likely the paper's per-dataset grid-searched SVO params (we use tartan_test.yaml defaults). Fine for RL-vs-heuristic
+  (same SVO settings), but not for matching the paper's absolute robustness.
+- Authors' evaluation (reference/rl_vo/evaluation/evaluate_runs.py): ATE = first sub-trajectory; a seq counts as finished
+  only without any failure ("-" in the tables = not finished). They also report an "intersection" metric: all methods
+  compared on the shortest common first segment (coverage-fair). TODO: add it to our compare.py.
+- 2026-09-27: **FAST-9 (ARM) vs FAST-10 (x86) corner detector: tested, NO effect.** x86 builds use FAST-10 (SSE2), the ARM
+  build FAST-9 (NEON). But SVO re-scores every candidate with fast_corner_score_10 and keeps a corner per grid cell only
+  if its score > threshold. FAST-9-only candidates score <= threshold and can never be selected, so the final features
+  are identical: TUM 9 seqs x 3 repeats gave byte-identical results, and speed was the same (within noise, <=3%).
+  Runtime switch kept: RLVO_FAST_VARIANT=10 (verified with lldb that it calls fast_corner_detect_10). Default FAST-9.
+  So the remaining gap to the paper is NOT the detector. Likely causes: grid-searched params, nondeterminism, library versions.
+- 2026-09-27: **Reference bug found: GT re-initialization after a tracking failure is mis-indexed** (svo_wrapper.py
+  reset_dones: GT flags/poses passed for all envs, other arrays packed; C++ uses the packed index for all). After a real
+  failure SVO re-initializes without/with wrong GT and reports a cascade of spurious failures. TUM (SVO rules, 3 reps):
+  46.3 failures/run -> 4.0 with `env.fix_reset_gt_indexing: true` (room 22.7 -> 0.7, rpy 14.7 -> 0.3); first-segment ATE
+  and coverage identical. Pilot failure counts and the failure_penalty signal were inflated by this. Also: GT init is
+  now never done on frames without GT (TUM floor; previously a fatal quaternion check). Recommendation: enable the fix
+  for all our experiments. **User decision 2026-09-27: ON by default** (base.yaml `env.fix_reset_gt_indexing: true`;
+  EnvConfig default stays False = reference, so tests/test_env.py still checks exact equivalence). Runs before this
+  (pilot, pilot2) used the buggy reset.
+- 2026-09-27: **SVO settings search on TUM** (scripts/svo_param_search.py, fix_reset_gt_indexing on, 16 configs over
+  kfselect_min_disparity/min_angle/min_dist_metric and quality_min_fts). Only quality_min_fts matters (40 -> 25). The keyframe
+  thresholds barely matter (FORWARD criterion is dominated by the #tracked-features bounds 90/180). Saved as
+  `svo_env/param/tum_tuned.yaml`: 7/8 paper seqs finished in 3/3 runs, mean
+  deviation 8% from the paper's SVO row; room 0.817 (+1%), rpy 0.055 (+3%). 360 still fails once per run. Tuned on the
+  test set, like the paper's baseline. RL must be evaluated with the SAME SVO params.
+- 2026-09-27: **User decision: tum_tuned is the standard for TUM.** `evaluate.py --dataset tum` now uses tum_tuned.yaml
+  (for SVO rules AND RL agents); the authors' untuned file is `--dataset tum_default`. Earlier TUM results
+  (results/eval/tum/tum_check*, tum_full) were produced with the untuned file and the buggy re-init.
