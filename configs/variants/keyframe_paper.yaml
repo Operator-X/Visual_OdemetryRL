@@ -1,0 +1,4 @@
+# Keyframe penalty as stated in the paper (5e-3) instead of the released code (1e-4)
+env:
+  reward:
+    keyframe_reward: 0.005

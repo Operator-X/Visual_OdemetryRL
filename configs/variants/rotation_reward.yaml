@@ -1,0 +1,5 @@
+# Relative rotation error over the window (alignment-free), capped at 2 deg
+env:
+  reward:
+    rotation_weight: 0.005
+    rotation_cap_deg: 2.0

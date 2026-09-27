@@ -1,0 +1,6 @@
+# Scale-invariant position error: e / GT path length in window. tau=0.25 calibrated so the mean
+# reward under SVO heuristics matches the absolute 0.2 m version (0.138).
+env:
+  reward:
+    error_mode: normalized
+    error_threshold: 0.25

@@ -1,0 +1,3 @@
+# Photometric domain randomization (gain, gamma, noise, exposure flicker) on training images
+env:
+  augment: true

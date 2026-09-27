@@ -121,6 +121,14 @@ bool FrameHandlerBase::addImageBundle(const std::vector<cv::Mat>& imgs,
       reprojectors_.at(0)->grid_.reset(new OccupandyGrid2D(new_cell_size, new_n_cols, new_n_rows));
       reprojectors_.at(0)->options_.cell_size = new_cell_size;
   }
+  // [rlvo] Optional 3rd action: FAST detector threshold (only if the caller passes >2 action columns).
+  if (actions.size() > 2) {
+    auto& det_opts = depth_filter_->feature_detector_->options_;
+    if (initial_threshold_primary_ < 0) {
+      initial_threshold_primary_ = det_opts.threshold_primary;
+    }
+    det_opts.threshold_primary = (!use_RL_actions || prev_state_reset_) ? initial_threshold_primary_ : actions(2);
+  }
   prev_state_reset_ = false;
 
   auto start_time = std::chrono::high_resolution_clock::now();
@@ -256,6 +264,16 @@ bool FrameHandlerBase::addImageBundle(const std::vector<cv::Mat>& imgs,
 //    observations.segment(17+i*3 + 1, 2) = last_frame->px_vec_.col(i);
     observations(24+i*3 + 1) = last_frame->px_vec_.col(i)(0) / cams_->getCameraShared(0)->imageWidth();
     observations(24+i*3 + 2) = last_frame->px_vec_.col(i)(1) / cams_->getCameraShared(0)->imageHeight();
+  }
+
+  // [rlvo] Optional extra observations appended after the 24 + 180*3 default block (only if the caller allocates them).
+  constexpr int kExtraObsStart = 24 + 180 * 3;
+  if (observations.size() >= kExtraObsStart + 5) {
+    observations(kExtraObsStart + 0) = static_cast<double>(static_cast<int>(tracking_quality_));
+    observations(kExtraObsStart + 1) = static_cast<double>(last_frame->num_features_);
+    observations(kExtraObsStart + 2) = static_cast<double>(map_->keyframes_.size());
+    observations(kExtraObsStart + 3) = depth_filter_->feature_detector_->options_.cell_size;
+    observations(kExtraObsStart + 4) = depth_filter_->feature_detector_->options_.threshold_primary;
   }
 
   // Done

@@ -263,6 +263,7 @@ public:
     prev_state_reset_ = true;
     }
   float initial_cell_size_;
+  double initial_threshold_primary_ = -1.0;  // [rlvo] FAST threshold from params, captured on first frame
   kindr::minimal::QuatTransformation T_WC_last_pose_;
   bool T_WC_last_pose_set_ = false;
   bool prev_state_reset_ = true;

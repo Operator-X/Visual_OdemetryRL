@@ -1,0 +1,3 @@
+# Much longer horizon (~100 frames)
+agent:
+  gamma: 0.99

@@ -1,0 +1,43 @@
+# Baseline = the authors' released setup (reference/rl_vo/config/config.yaml), scaled to one Mac.
+# Deviations from the authors (all forced by compute): n_envs 100 -> 12, total_timesteps 25M -> pilot budget,
+# PPO batch = n_steps * n_envs = 3000 (authors: full batch of 25000), local TartanAir subset (3 Easy scenes).
+seed: 0
+n_envs: 12
+torch_threads: 4
+total_timesteps: 1000000
+val_interval: 50            # PPO iterations between held-out evaluations (+ checkpoint)
+
+data:
+  tartan_dir: data/TartanAir
+  svo_params: tartan_train.yaml
+  calib: data/calibration/tartan_pinhole.yaml
+
+agent:                       # authors' values
+  n_epochs: 10
+  gae_lambda: 0.95
+  gamma: 0.6
+  n_steps: 250
+  batch_size: 0              # 0 = full batch (n_steps * n_envs), as the authors
+  ent_coef: 0.0025
+  vf_coef: 0.5
+  max_grad_norm: 0.5
+  lr_start: 3.0e-4
+  lr_end: 3.0e-5
+
+env:
+  reward:
+    align_reward: 0.01       # lambda1
+    keyframe_reward: 0.0001  # lambda2 (code; paper says 5e-3)
+    traj_length: 5
+    nr_points_for_align: 3
+    error_mode: absolute
+    error_threshold: 0.2
+    min_path_length: 0.05
+    rotation_weight: 0.0
+    rotation_cap_deg: 2.0
+    failure_penalty: 0.0
+  critic_horizon: 1
+  extra_obs: false
+  frame_stack: 1
+  threshold_action: false
+  augment: false

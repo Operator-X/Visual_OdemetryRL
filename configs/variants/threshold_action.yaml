@@ -1,0 +1,4 @@
+# New action: FAST detector threshold in {5,10,15,20,25} (+ extra obs so the agent sees its setting)
+env:
+  threshold_action: true
+  extra_obs: true

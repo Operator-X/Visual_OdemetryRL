@@ -45,9 +45,14 @@ At every frame, an RL agent picks VO hyperparameters online instead of using han
 | Other PPO params | — | n_steps 250, batch 25000, n_epochs 10, gae_λ 0.95, ent_coef 0.0025 |
 | DSO / ORB-SLAM3 | reported | **not released** (SVO only) |
 
-## Ideas for going beyond (to be refined)
-- More actions: feature-detection thresholds, number of features, BA iterations, and similar.
-- Different agents: recurrent/temporal policy, off-policy / sample-efficient RL (important for our compute budget).
-- Other VO backends (DSO, ORB-SLAM3, learned front-ends like DPVO).
-- Reward shaping: rotation error, runtime-aware terms, robustness/failure penalties.
-- Generalization studies: sim-to-real gap, KITTI / outdoor, low light.
+## Weaknesses in the authors' setup -> our variants
+See `docs/modifications.md` for details. In short:
+- Losing tracking is not penalized; gamma=0.6 means a ~2.5-frame horizon -> `failure_penalty`, `gamma_0.9/0.99`
+- 0.2 m absolute error threshold across scenes of very different scale -> `normalized_error`
+- Rotation ignored in the reward -> `rotation_reward` (relative rotation error; Umeyama rotation from 3 points is ill-posed)
+- Keyframe penalty differs 50x between paper and code -> `keyframe_paper`
+- Critic sees only 1 future GT step -> `critic_horizon_5`
+- Memoryless policy -> `frame_stack_3` (LSTM = future work)
+- Only keyframe + grid size are learned -> `threshold_action` (FAST threshold); SVO quality signals unused -> `extra_obs`
+- Synthetic-only training -> `augment` (photometric domain randomization)
+- Biggest limit is SVO itself (EuRoC 0.97 m vs DPVO 0.105 m) -> other backends = future work

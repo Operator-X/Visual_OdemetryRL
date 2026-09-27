@@ -1,0 +1,3 @@
+# 5 extra SVO quality stats: tracking quality, #features, #keyframes, cell size, FAST threshold
+env:
+  extra_obs: true

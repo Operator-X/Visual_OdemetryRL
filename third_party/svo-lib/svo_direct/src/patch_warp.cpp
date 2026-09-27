@@ -109,6 +109,14 @@ int getBestSearchLevel(
   return search_level;
 }
 
+// [rlvo] NaN/inf-safe bounds check done in floating point BEFORE converting to int. Converting inf or huge values to
+// int is UB: x86 yields INT_MIN (caught by `xi<0`), ARM saturates to INT_MAX so `xi+1` overflows and the original
+// check passes -> out-of-bounds read (SIGBUS on Apple Silicon during relocalization). Same result for normal values.
+static inline bool rlvoInsideInterpolationBounds(double x, double y, int cols, int rows)
+{
+  return x >= 0.0 && y >= 0.0 && x < cols - 1 && y < rows - 1;  // false for NaN
+}
+
 bool warpAffine(
     const AffineTransformation2& A_cur_ref,
     const cv::Mat& img_ref,
@@ -135,6 +143,8 @@ bool warpAffine(
     {
       const Eigen::Vector2f px_patch(x, y);
       const Eigen::Vector2f px(A_ref_cur*px_patch + px_ref_pyr);
+      if (!rlvoInsideInterpolationBounds(px[0], px[1], img_ref.cols, img_ref.rows))
+        return false;
       const int xi = std::floor(px[0]);
       const int yi = std::floor(px[1]);
       if (xi<0 || yi<0 || xi+1>=img_ref.cols || yi+1>=img_ref.rows)
@@ -200,6 +210,8 @@ bool warpPixelwise(
       ref_frame.cam()->project3(ele_xyz_ref, &ele_ref);
       ele_ref = ele_ref / (1<<level_ref);
 
+      if (!rlvoInsideInterpolationBounds(ele_ref[0], ele_ref[1], img_ref.cols, img_ref.rows))
+        return false;
       const int xi = std::floor(ele_ref[0]);
       const int yi = std::floor(ele_ref[1]);
       if (xi<0 || yi<0 || xi+1>=img_ref.cols || yi+1>=img_ref.rows)

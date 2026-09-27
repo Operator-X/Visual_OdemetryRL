@@ -21,3 +21,8 @@ evo
 # Dev
 ipykernel
 pybind11
+
+# Analysis / tests
+pandas
+tabulate
+pytest

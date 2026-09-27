@@ -10,6 +10,7 @@ PY="$ROOT/.venv/bin/python"
 BREW="$(brew --prefix)"
 OMP="$BREW/opt/libomp"
 YAML="$BREW/opt/yaml-cpp"
+# NOTE: run scripts/fix_torch_libomp.sh once per torch install, so torch shares this (Homebrew) libomp.
 
 cmake -S "$SRC" -B "$BUILD" \
   -DCMAKE_BUILD_TYPE=Release \
@@ -28,3 +29,4 @@ cmake -S "$SRC" -B "$BUILD" \
   -DCMAKE_EXE_LINKER_FLAGS="-L$YAML/lib"
 
 make -C "$BUILD" -k -j"$(sysctl -n hw.ncpu)" "$@"
+

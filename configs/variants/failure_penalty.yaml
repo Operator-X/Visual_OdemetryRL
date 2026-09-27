@@ -1,0 +1,4 @@
+# Explicit penalty when SVO loses tracking (~13 steps of max position reward)
+env:
+  reward:
+    failure_penalty: 0.02

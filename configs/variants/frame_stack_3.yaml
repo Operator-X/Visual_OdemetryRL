@@ -1,0 +1,3 @@
+# Memory: the agent sees the fixed observations of the last 3 steps
+env:
+  frame_stack: 3
