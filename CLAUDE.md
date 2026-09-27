@@ -1,5 +1,8 @@
 # RL Visual Odometry — project context
 
+> **Continue here:** `docs/research_plan.md` has the next steps (first real training experiment, then a comparative
+> study of RL techniques) and the open decisions for the user.
+
 ## Goal
 Replicate **"Reinforcement Learning Meets Visual Odometry"** (Messikommer, Cioffi, Gehrig, Scaramuzza — ECCV 2024),
 then extend it with new contributions. This is a **course project**, and the aim is to turn it into a **publishable paper**.
@@ -12,6 +15,7 @@ reference/    Official code (uzh-rpg/rl_vo @ c273182). READ-ONLY. Do not edit; c
 third_party/svo-lib/  Our patched copy of SVO (from reference/). Every change is marked with a `[rlvo]` comment.
 src/rlvo/     Our package: env.py (RLVOEnv = reference env + switchable modifications), data.py, train.py, evaluate.py
 docs/         modifications.md: every change to the authors' setup (why, how, where) + bugs found
+              research_plan.md: next steps, comparative-study plan, open decisions
 configs/      base.yaml (authors' setup scaled to 12 envs) + variants/<name>.yaml (one modification each)
 tests/        test_env.py: our env == reference when all switches are off; sanity checks
 scripts/      Entry points: train / eval / data prep / plotting
