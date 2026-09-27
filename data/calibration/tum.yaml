@@ -1,0 +1,27 @@
+label: "Euroc"
+id: 412eab8e4058621f7036b5e765dfe812
+cameras:
+- camera:
+    label: cam0
+    id: 54812562fa109c40fe90b29a59dd7798
+    line-delay-nanoseconds: 0
+    image_height: 480
+    image_width: 640
+    type: pinhole
+    intrinsics:
+      cols: 1
+      rows: 4
+      data: [517.3, 516.5, 318.6, 255.3]
+    distortion:
+      type: radial-tangential  
+      parameters:
+        cols: 1
+        rows: 4
+        data: [0.2624, -0.9531, -0.0054, 0.0026]
+  T_B_C:
+    cols: 4
+    rows: 4
+    data: [1, 0, 0, 0,
+           0, 1, 0, 0,
+           0, 0, 1, 0,
+           0, 0, 0, 0]

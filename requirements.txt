@@ -1,0 +1,23 @@
+# Core
+numpy
+scipy
+torch
+stable-baselines3
+gymnasium
+
+# VO / data
+opencv-python
+PyYAML
+hydra-core
+
+# Logging / eval / plots
+wandb
+tqdm
+matplotlib
+plotly
+SciencePlots
+evo
+
+# Dev
+ipykernel
+pybind11
