@@ -74,15 +74,35 @@ writeup/      Course report + paper draft
   (config.yaml, meta.json with git commit, train.csv per rollout, eval.csv, Policy/*.pth + *_rms.npz)
 - All variants: `scripts/run_all_variants.sh <tag> <steps> [repeats]`. Compare: `scripts/compare.py --tag <tag>`
   -> `results/tables/<tag>_<dataset>.md`
-- Evaluate: `scripts/evaluate.py --runs runs/X --heuristic --repeats 3 [--dataset euroc] --out-tag <tag>`
+- Evaluate: `scripts/evaluate.py --runs runs/X --heuristic --repeats 3 [--dataset euroc] [--stochastic] --out-tag <tag>`
+  (`--stochastic` samples actions instead of argmax -> results in `<tag>_stoch`)
+- Resume / extend: `scripts/train.py --resume runs/X [--set total_timesteps=N]`. `checkpoint.pt` is written every
+  `checkpoint_every` PPO updates (atomic). Env state (SVO map) can't be saved, so all envs restart their sequences after a resume.
+- Plots: `scripts/plot_curves.py --tag <tag>` -> `results/figures/<tag>_curves_<metric>.png` (small multiples vs baseline)
+- Held-out TartanAir set: the authors' test split + `data.extra_val_trajs` (base.yaml) = 6 val / 18 train on our subset.
+  Runs trained before 2026-09-27 evening used only the 3-trajectory split (their config lacks the key).
+- Metrics: `ate` (authors', first segment only) + `first_sub_frac`; `ate_all` (every segment between failures aligned
+  separately, >=10 poses, length-weighted RMSE) + `ate_all_cov`; tracked fraction; failures. Short segments align
+  easily, so read `ate_all` with its coverage and the failure count too.
 - Tests: `.venv/bin/python -m pytest -q tests/`
-- Speed on the M3 Pro: ~570 training steps/s including PPO updates (1M steps is ~30 min). Torch thread count makes no difference.
+- Speed on the M3 Pro: ~570 training steps/s including PPO updates (1M steps is ~30 min) with 8 SVO threads. Torch thread count makes no difference.
+  `svo_threads: 12` (base.yaml -> env var RLVO_SVO_THREADS) gives ~20% faster rollouts (1272 vs 1060 env-steps/s).
+  Profile of a short run: SVO step ~45%, PPO update ~26%, image loading ~13%, policy forward ~12%, reward <2%.
+- **Observation normalization starts late:** the reference PPO only activates obs normalization at PPO iteration 10
+  (`update_rms` every 10 iterations). Until then the policy sees raw values (e.g. #features ~140). Runs shorter than
+  10 iterations (30k steps at 12 envs) never normalize, and variants with more large inputs (extra_obs, frame_stack,
+  threshold_action) start with biased keyframe decisions (20-30% instead of 50%).
+  **Fix (option):** `obs_rms_warmup_steps: N` runs N vec-steps of SVO heuristics before training to estimate the stats
+  and activates them immediately. Default 0 = authors. Use ~200 for short tests
+  (`scripts/run_all_variants.sh <tag> <steps> <repeats> obs_rms_warmup_steps=200`). Verified on extra_obs:
+  first-rollout keyframe rate 0.49 with warm-up vs 0.21 without.
 - The user wants **small-scale tests only for now** (minutes, not hours). Ask before launching anything long.
 - **Metric pitfall:** the authors' ATE uses only the segment before the FIRST tracking failure. Policies that fail
   early get a tiny, flattering ATE (pilot: extra_obs ATE 0.17 m at 6% coverage, 31 failures/traj). Always report
   `ate_coverage`, tracked fraction and failures next to ATE. Consider a coverage-aware headline metric for the paper.
-- Per-variant training cost is about the same as the baseline, except `augment` (~2x slower: per-pixel noise generation, can be optimized).
-- SVO calls `omp_set_num_threads(8)` process-wide in its constructor. torch shares the same OpenMP runtime.
+- Augmentation cost: 2.7 ms per 12-image batch (OpenCV LUT + precomputed noise bank; was ~8 ms+ with per-pixel RNG).
+- SVO's parallel loops now use an explicit `num_threads(...)` clause (no process-wide omp_set_num_threads), so torch
+  and SVO no longer overwrite each other's thread counts.
 
 ## The reference implementation (key facts)
 - Only **SVO** is released (no DSO / ORB-SLAM3 code). SVO is C++ (`reference/rl_vo/svo-lib`) with pybind11 bindings (`svo_env`),

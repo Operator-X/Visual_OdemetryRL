@@ -87,6 +87,18 @@ Compare: `scripts/compare.py --tag <tag>` writes `results/tables/<tag>_<dataset>
 - **How:** per sequence: gain U(0.7, 1.3), gamma U(0.7, 1.4), noise sigma U(0, 5). Per frame: ±3% brightness flicker.
   Kept mild because SVO is a direct method (photometric consistency).
 
+## Infrastructure improvements (not experiment variables)
+| Change | Effect |
+|---|---|
+| `svo_threads: 12` (env var `RLVO_SVO_THREADS`, explicit OpenMP clause in `svo_vec_env.cpp` and `utils.cpp`) | ~20% faster rollouts; torch no longer changes SVO's thread count and vice versa |
+| Augmentation with OpenCV LUT + precomputed noise bank | 8.2 -> 2.7 ms per 12-image batch |
+| Checkpoint + resume (`--resume`) | runs survive sleep, crashes and Colab disconnects, and can be extended |
+| 3 extra held-out TartanAir trajectories | 6 val trajectories instead of 3 (harder: heuristic fails ~10x per trajectory) |
+| `ate_all` coverage-aware metric + stochastic evaluation mode | the authors' ATE can be gamed by failing early; argmax exaggerates early policies |
+| `scripts/plot_curves.py` | learning curves as small multiples vs baseline |
+
+| `obs_rms_warmup_steps` (off by default) | the reference PPO activates observation normalization only at PPO iteration 10, so short runs never normalize and variants with large extra inputs start biased (extra_obs: 21% keyframes before any learning). A warm-up of 200 vec-steps of SVO heuristics fixes it (49%). Use it for all short tests. |
+
 ## Not implemented (documented future work)
 - **A different VO backend** (DSO, ORB-SLAM3, DPVO). RL-SVO is far behind modern learned VO (EuRoC 0.97 m vs DPVO
   0.105 m). This is probably the most publishable direction, and a project of its own.

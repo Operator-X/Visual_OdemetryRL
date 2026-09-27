@@ -3,6 +3,7 @@
     .venv/bin/python scripts/train.py --name baseline
     .venv/bin/python scripts/train.py --variant failure_penalty            # configs/variants/<name>.yaml on top of base
     .venv/bin/python scripts/train.py --variant gamma_0.9 --set total_timesteps=200000 seed=1
+    .venv/bin/python scripts/train.py --resume runs/baseline_s0 [--set total_timesteps=2000000]   # continue / extend
 
 Outputs go to runs/<name>/: config.yaml, meta.json, train.csv, eval.csv, Policy/*.pth + *_rms.npz
 """
@@ -21,7 +22,16 @@ def main():
     ap.add_argument("--variant", default=None, help="name of configs/variants/<variant>.yaml")
     ap.add_argument("--name", default=None, help="run name (default: variant name or 'baseline')")
     ap.add_argument("--set", nargs="*", default=[], help="dotlist overrides, e.g. agent.gamma=0.9")
+    ap.add_argument("--resume", default=None, help="run dir to continue from its checkpoint.pt (e.g. runs/baseline_s0)")
     args = ap.parse_args()
+
+    if args.resume:
+        run = Path(args.resume)
+        cfg = load_config(run / "config.yaml", overrides=args.set)   # e.g. --set total_timesteps=2000000 to extend
+        from omegaconf import OmegaConf
+        OmegaConf.save(cfg, run / "config.yaml")
+        train(cfg, run, resume=True)
+        return
 
     paths = [ROOT / "configs/base.yaml"]
     if args.variant:

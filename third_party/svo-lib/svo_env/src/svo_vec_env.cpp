@@ -1,5 +1,7 @@
 #include <svo_env/svo_vec_env.h>
 #include <opencv2/opencv.hpp>
+#include <cstdlib>
+#include <algorithm>
 
 namespace svo {
 
@@ -11,6 +13,10 @@ SvoVecEnv::SvoVecEnv(
   // initialization
 //  num_threads_ = 64;
   num_threads_ = 8;
+  // [rlvo] thread count overridable via RLVO_SVO_THREADS (default 8 = authors' value)
+  if (const char* t = std::getenv("RLVO_SVO_THREADS")) {
+    num_threads_ = std::max(1, std::atoi(t));
+  }
   num_envs_ = num_envs;
   initialize_glog_ = initialize_glog;
 
@@ -67,7 +73,7 @@ void SvoVecEnv::step(pybind11::array_t<uint8_t> &input_images,
 
 //  omp_set_num_threads(num_threads_);
 
-#pragma omp parallel for schedule(dynamic)
+#pragma omp parallel for schedule(dynamic) num_threads(num_threads_)  // [rlvo] explicit: torch shares the OpenMP runtime
   for (int i = 0; i < this->num_envs_; i++) {
     perAgentStep(i, i, images_tensor, times_nsec, actions, use_RL_actions, out_pose, observations, dones, stages,
                  runtime, use_gt_init_pose, gt_init_pose);
@@ -123,7 +129,7 @@ void SvoVecEnv::env_step(Ref<Vector<>> indices,
 
   int num_indices = indices.rows();
 
-#pragma omp parallel for schedule(dynamic)
+#pragma omp parallel for schedule(dynamic) num_threads(num_threads_)  // [rlvo] explicit: torch shares the OpenMP runtime
   for (int i = 0; i < num_indices; i++) {
     perAgentStep(indices[i], i, images_tensor, times_nsec, actions, use_RL_actions, out_pose, observations, dones,
                  stages, runtime, use_gt_init_pose, gt_init_pose);

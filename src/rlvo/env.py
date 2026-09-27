@@ -56,19 +56,21 @@ class EnvConfig:
 
 class RLVOEnv(VecSVOEnv):
     def __init__(self, params_yaml_path, calib_yaml_path, dataset_dir, num_envs, mode, cfg: EnvConfig,
-                 initialize_glog=False, val_traj_ids=None, dataset='tartanair', seed=0):
+                 initialize_glog=False, val_traj_ids=None, dataset='tartanair', seed=0, extra_val=()):
         self.cfg = cfg
         r = cfg.reward
         ref_reward = SimpleNamespace(align_reward=r.align_reward, keyframe_reward=r.keyframe_reward,
                                      traj_length=r.traj_length, nr_points_for_align=r.nr_points_for_align)
-        super().__init__(params_yaml_path, calib_yaml_path, dataset_dir, num_envs, mode, ref_reward,
-                         initialize_glog=initialize_glog, val_traj_ids=val_traj_ids, dataset=dataset)
-
-        # Dataloader with K future poses (identical to reference for K=1)
+        ref_dataset = dataset
         if dataset == 'tartanair':
-            self.dataloader = TartanLoaderK(dataset_dir, self.mode, self.num_envs, self.val_traj_ids,
-                                            n_future=cfg.critic_horizon)
-            self.dataloader_iter = iter(self.dataloader)
+            # Our loader: K future poses (identical to reference for K=1) + extra held-out trajectories.
+            # Built BEFORE the reference __init__, which is told an unknown dataset name so it keeps this loader
+            # (the reference loader would assert on the authors' fixed val split).
+            self.dataloader = TartanLoaderK(dataset_dir, mode, num_envs, val_traj_ids,
+                                            n_future=cfg.critic_horizon, extra_val=extra_val)
+            ref_dataset = '__rlvo_prebuilt__'
+        super().__init__(params_yaml_path, calib_yaml_path, dataset_dir, num_envs, mode, ref_reward,
+                         initialize_glog=initialize_glog, val_traj_ids=val_traj_ids, dataset=ref_dataset)
 
         # Observation layout seen by the policy: [fixed_t, fixed_{t-1}, ..., keypoints(540), critique]
         self.n_extra = N_EXTRA_OBS if cfg.extra_obs else 0

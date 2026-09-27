@@ -27,9 +27,12 @@ def main():
     for f in sorted(eval_dir.glob("*.csv")):
         df = pd.read_csv(f)
         run = f.stem
-        variant = "heuristic (SVO rules)" if run == "heuristic" else run.removeprefix(args.tag + "_").removesuffix("_s0")
+        run_tag = args.tag.removesuffix("_stoch")   # stochastic evals live in <tag>_stoch but runs are <tag>_<variant>
+        variant = "heuristic (SVO rules)" if run == "heuristic" else run.removeprefix(run_tag + "_").removesuffix("_s0")
         row = dict(variant=variant, ate_m=df["ate"].mean(skipna=True), ate_median_m=df["ate"].median(skipna=True),
                    ate_coverage=df["first_sub_frac"].mean(),   # share of the sequence the ATE segment covers
+                   ate_all_m=df["ate_all"].mean(skipna=True) if "ate_all" in df else np.nan,
+                   ate_all_cov=df["ate_all_cov"].mean() if "ate_all_cov" in df else np.nan,
                    tracked=df["tracked_frac"].mean(), failures_per_traj=df["failures"].mean(),
                    keyframe_rate=df["keyframe_rate"].mean())
         run_dir = ROOT / "runs" / run
@@ -51,6 +54,7 @@ def main():
     if "baseline" in set(t["variant"]):
         b = t[t["variant"] == "baseline"].iloc[0]
         t["d_ate_%"] = 100 * (t["ate_m"] - b["ate_m"]) / b["ate_m"]
+        t["d_ate_all_%"] = 100 * (t["ate_all_m"] - b["ate_all_m"]) / b["ate_all_m"]
         t["d_tracked_pts"] = 100 * (t["tracked"] - b["tracked"])
 
     out = ROOT / "results" / "tables"
@@ -61,7 +65,9 @@ def main():
         f"# {args.tag} — {args.dataset}\n\nATE: first sub-trajectory before a tracking failure (authors' metric), "
         f"mean over held-out trajectories x repeats. `d_*` columns are relative to the baseline.\n\n"
         f"**Read ATE together with `ate_coverage`:** a policy that fails early gets a short first segment and a small, "
-        f"flattering ATE. Only compare ATE between runs with similar coverage.\n\n{md}\n")
+        f"flattering ATE. Only compare ATE between runs with similar coverage.\n"
+        f"`ate_all_m` is coverage-aware: every tracked segment between failures is aligned separately "
+        f"(>= 10 poses) and errors are pooled (length-weighted RMSE); `ate_all_cov` is the share it covers.\n\n{md}\n")
     print(md)
 
 

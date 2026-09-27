@@ -16,6 +16,7 @@ import rlvo
 from policies.attention_policy import CustomActorCriticPolicy
 from rl_algorithms.ppo import PPO
 
+from rlvo.data import split_trajectories
 from rlvo.env import EnvConfig, RewardConfig, RLVOEnv
 from rlvo.evaluate import evaluate
 
@@ -31,17 +32,27 @@ def env_config(cfg):
     return EnvConfig(reward=RewardConfig(**e.pop('reward', {})), **e)
 
 
+def set_svo_threads(cfg):
+    """SVO reads RLVO_SVO_THREADS when an env is constructed and on every image-batch load."""
+    os.environ["RLVO_SVO_THREADS"] = str(cfg.get("svo_threads", 8))
+
+
 def make_envs(cfg, val=True):
+    set_svo_threads(cfg)
     ecfg = env_config(cfg)
     data = str(rlvo.ROOT / cfg.data.tartan_dir)
     params = str(rlvo.SVO_PARAMS / cfg.data.svo_params)
     calib = str(rlvo.ROOT / cfg.data.calib)
-    env = RLVOEnv(params, calib, data, cfg.n_envs, 'train', ecfg, initialize_glog=True, seed=cfg.seed)
+    extra_val = list(cfg.data.get("extra_val_trajs", []))
+    train_trajs, val_trajs = split_trajectories(data, extra_val)
+    if cfg.n_envs > len(train_trajs):
+        raise SystemExit(f"n_envs={cfg.n_envs} > {len(train_trajs)} training trajectories (TartanLoader needs <=)")
+    env = RLVOEnv(params, calib, data, cfg.n_envs, 'train', ecfg, initialize_glog=True, seed=cfg.seed,
+                  extra_val=extra_val)
     val_env = None
     if val:
-        from dataloader.tartan_loader import test_split
-        n_val = sum(1 for t in Path(data).glob("*/*/P*") if any(s in str(t) for s in test_split))
-        val_env = RLVOEnv(params, calib, data, n_val, 'val', ecfg, initialize_glog=False, seed=cfg.seed)
+        val_env = RLVOEnv(params, calib, data, len(val_trajs), 'val', ecfg, initialize_glog=False, seed=cfg.seed,
+                          extra_val=extra_val)
     return env, val_env
 
 
@@ -58,16 +69,18 @@ def make_policy_kwargs(env):
 class CSVRolloutLogger(BaseCallback):
     """Per-rollout training metrics to CSV (the reference only logs to wandb)."""
 
-    def __init__(self, path):
+    def __init__(self, path, append=False, wall_offset=0.0):
         super().__init__()
         self.path = path
-        self.t0 = time.time()
+        self.t0 = time.time() - wall_offset
         self._fail = 0
         self._steps = 0
-        self._f = open(path, "w", newline="")
+        append = append and os.path.exists(path)
+        self._f = open(path, "a" if append else "w", newline="")
         self._w = csv.writer(self._f)
-        self._w.writerow(["iteration", "timesteps", "wall_s", "reward_per_step", "valid_ratio", "keyframe_rate",
-                          "failures_per_1k", "position_reward", "rotation_reward"])
+        if not append:
+            self._w.writerow(["iteration", "timesteps", "wall_s", "reward_per_step", "valid_ratio", "keyframe_rate",
+                              "failures_per_1k", "position_reward", "rotation_reward"])
         self._pr = self._rr = 0.0
 
     def _on_step(self):
@@ -82,7 +95,8 @@ class CSVRolloutLogger(BaseCallback):
         buf = self.locals["rollout_buffer"]
         valid = buf.valid_mask
         nv = max(valid.sum(), 1)
-        self._w.writerow([self.model.iteration if hasattr(self.model, "iteration") else -1, self.model.num_timesteps,
+        rollout = self.model.n_steps * self.model.n_envs   # continuous across resumes (reference resets iteration)
+        self._w.writerow([self.model.num_timesteps // rollout - 1, self.model.num_timesteps,
                           round(time.time() - self.t0, 1), float(buf.rewards.mean()), float(valid.mean()),
                           float((buf.actions[:, :, 0] * valid).sum() / nv), 1000.0 * self._fail / max(self._steps, 1),
                           self._pr / max(self._steps, 1), self._rr / max(self._steps, 1)])
@@ -105,8 +119,82 @@ class RLVOPPO(PPO):
                 w.writeheader()
             for r in res:
                 w.writerow({"iteration": self.iteration, "timesteps": self.num_timesteps, **r})
-        ates = [r["ate"] for r in res]
-        print(f"[eval] iter {self.iteration}: ATE {np.round(ates, 3)}  tracked {[round(r['tracked_frac'], 2) for r in res]}")
+        print(f"[eval] {self.num_timesteps} steps: ATE {np.round([r['ate'] for r in res], 3)} "
+              f"ATE_all {np.round([r['ate_all'] for r in res], 3)} tracked {[round(r['tracked_frac'], 2) for r in res]}")
+
+
+# ------------------------------------------------------------------ checkpoint / resume
+CKPT = "checkpoint.pt"
+
+
+def _rms_state(rms):
+    return dict(mean=np.asarray(rms.mean), var=np.asarray(rms.var), count=float(rms.count))
+
+
+def save_checkpoint(model, env, run_dir, wall_s):
+    """Everything needed to continue training: weights, optimizer, step counter, obs normalization, RNG states."""
+    state = dict(
+        policy=model.policy.state_dict(), optimizer=model.policy.optimizer.state_dict(),
+        num_timesteps=int(model.num_timesteps), wall_s=float(wall_s),
+        obs_rms=_rms_state(env.obs_rms), obs_rms_new=_rms_state(env.obs_rms_new),
+        rms_shared=env.obs_rms is env.obs_rms_new,
+        rng=dict(numpy=np.random.get_state(), torch=torch.get_rng_state()),
+    )
+    tmp = Path(run_dir) / (CKPT + ".tmp")
+    torch.save(state, tmp)
+    os.replace(tmp, Path(run_dir) / CKPT)   # atomic: a crash mid-save never corrupts the last checkpoint
+
+
+def load_checkpoint(model, env, val_env, run_dir):
+    state = torch.load(Path(run_dir) / CKPT, map_location="cpu", weights_only=False)
+    model.policy.load_state_dict(state["policy"])
+    model.policy.optimizer.load_state_dict(state["optimizer"])
+    model.num_timesteps = state["num_timesteps"]
+    for name in ("obs_rms", "obs_rms_new"):
+        rms = getattr(env, name)
+        rms.mean, rms.var, rms.count = state[name]["mean"], state[name]["var"], state[name]["count"]
+    if state["rms_shared"]:
+        env.obs_rms = env.obs_rms_new
+    if val_env is not None:
+        val_env.obs_rms = env.obs_rms
+    np.random.set_state(state["rng"]["numpy"])
+    torch.set_rng_state(state["rng"]["torch"])
+    return state
+
+
+def warmup_obs_rms(env, val_env, vec_steps):
+    """Estimate observation-normalization stats before training (SVO heuristics, GT init), then activate them.
+
+    The reference PPO only activates normalization at PPO iteration 10; before that the policy sees raw values.
+    env.normalize_obs() updates obs_rms_new on every train-mode step, so stepping is enough to collect the stats.
+    """
+    env.reset(use_gt_initialization=True)
+    zeros = np.zeros([env.num_envs, env.action_dim], dtype=np.int64)
+    for _ in range(int(vec_steps)):
+        env.step(zeros, use_RL_actions_bool=False, use_gt_initialization=True)
+    env.update_rms()                     # obs_rms <- obs_rms_new (same object from now on, as in the reference)
+    if val_env is not None:
+        val_env.obs_rms = env.obs_rms
+    print(f"[warmup] obs normalization from {int(vec_steps) * env.num_envs} samples")
+
+
+class CheckpointCallback(BaseCallback):
+    """Saves a resumable checkpoint every `every` PPO updates (at rollout start = right after an update)."""
+
+    def __init__(self, env, run_dir, every, wall_offset=0.0):
+        super().__init__()
+        self.env_ref, self.run_dir, self.every = env, run_dir, max(1, int(every))
+        self.t0 = time.time() - wall_offset
+        self._updates = 0
+
+    def _on_rollout_start(self):
+        if getattr(self.model, "iteration", 0) > 0:
+            self._updates += 1
+            if self._updates % self.every == 0:
+                save_checkpoint(self.model, self.env_ref, self.run_dir, time.time() - self.t0)
+
+    def _on_step(self):
+        return True
 
 
 def git_commit():
@@ -116,11 +204,16 @@ def git_commit():
         return "unknown"
 
 
-def train(cfg, run_dir):
+def train(cfg, run_dir, resume=False):
+    """Train from scratch, or with resume=True continue from run_dir/checkpoint.pt (config taken from run_dir)."""
     run_dir = Path(run_dir)
     run_dir.mkdir(parents=True, exist_ok=True)
-    OmegaConf.save(cfg, run_dir / "config.yaml")
-    (run_dir / "meta.json").write_text(json.dumps({"git_commit": git_commit(), "start": time.ctime()}, indent=2))
+    resuming = resume and (run_dir / CKPT).exists()
+    if resuming:
+        cfg = OmegaConf.load(run_dir / "config.yaml")
+    else:
+        OmegaConf.save(cfg, run_dir / "config.yaml")
+        (run_dir / "meta.json").write_text(json.dumps({"git_commit": git_commit(), "start": time.ctime()}, indent=2))
 
     torch.set_num_threads(cfg.torch_threads)
     np.random.seed(cfg.seed)
@@ -139,16 +232,30 @@ def train(cfg, run_dir):
         learning_rate=get_linear_fn(a.lr_start, a.lr_end, 1.0), clip_range=0.2, use_sde=False, verbose=0,
         seed=cfg.seed, wandb_logging=False, wandb_tag=None, wandb_group=None, config=cfg, device="cpu",
     )
+    wall0 = 0.0
+    if resuming:
+        state = load_checkpoint(model, env, val_env, run_dir)
+        wall0 = state["wall_s"]
+        env.seed(cfg.seed + state["num_timesteps"])   # fresh SVO randomness after resume
+        print(f"[resume] from {state['num_timesteps']} steps")
+    elif cfg.get("obs_rms_warmup_steps", 0) > 0:
+        warmup_obs_rms(env, val_env, cfg.obs_rms_warmup_steps)
+    remaining = int(cfg.total_timesteps) - int(model.num_timesteps)
     t0 = time.time()
-    model.learn(total_timesteps=int(cfg.total_timesteps), log_interval=None, eval_interval=cfg.val_interval,
-                val_env=val_env, callback=CSVRolloutLogger(str(run_dir / "train.csv")))
-    # final checkpoint + evaluation
+    if remaining > 0:
+        callbacks = [CSVRolloutLogger(str(run_dir / "train.csv"), append=resuming, wall_offset=wall0),
+                     CheckpointCallback(env, run_dir, cfg.get("checkpoint_every", 10), wall_offset=wall0)]
+        model.learn(total_timesteps=remaining, log_interval=None, eval_interval=cfg.val_interval,
+                    val_env=val_env, callback=callbacks, reset_num_timesteps=not resuming)
+    save_checkpoint(model, env, run_dir, wall0 + time.time() - t0)
+    # final policy + evaluation
     pol = run_dir / "Policy"
     pol.mkdir(exist_ok=True)
     model.policy.save(str(pol / "final.pth"))
     env.save_rms(str(pol / "final_rms.npz"))
     model.evaluation_epoch(val_env)
     meta = json.loads((run_dir / "meta.json").read_text())
-    meta.update(end=time.ctime(), train_hours=(time.time() - t0) / 3600, timesteps=int(model.num_timesteps))
+    meta.update(end=time.ctime(), train_hours=(wall0 + time.time() - t0) / 3600, timesteps=int(model.num_timesteps),
+                resumed=bool(resuming) or meta.get("resumed", False))
     (run_dir / "meta.json").write_text(json.dumps(meta, indent=2))
     return model

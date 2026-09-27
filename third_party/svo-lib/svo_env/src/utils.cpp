@@ -1,3 +1,5 @@
+#include <cstdlib>
+#include <algorithm>
 #include <iostream>
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
@@ -15,10 +17,14 @@ pybind11::array_t<uint8_t> load_image_batch(const std::vector<std::string>& imag
     pybind11::array_t<uint8_t> result({num_images, height, width, channels});
     auto result_ptr = result.mutable_data();
 
+    // [rlvo] no process-wide omp_set_num_threads (it also changed torch's thread count every step);
+    // local clause instead, same RLVO_SVO_THREADS override as SvoVecEnv (default 8 = authors' value)
     int num_threads = 8;
-    omp_set_num_threads(num_threads);
+    if (const char* t = std::getenv("RLVO_SVO_THREADS")) {
+      num_threads = std::max(1, std::atoi(t));
+    }
 
-    #pragma omp parallel for schedule(dynamic)
+    #pragma omp parallel for schedule(dynamic) num_threads(num_threads)
     for (int i = 0; i < num_images; ++i) {
 //        cv::Mat image = cv::imread(image_paths[i], cv::IMREAD_COLOR);
         cv::Mat image = cv::imread(image_paths[i], cv::IMREAD_GRAYSCALE);

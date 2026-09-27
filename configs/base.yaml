@@ -4,13 +4,19 @@
 seed: 0
 n_envs: 12
 torch_threads: 4
+svo_threads: 12            # OpenMP threads for SVO envs + image loading (authors: 8; 12 is ~20% faster on the M3 Pro)
 total_timesteps: 1000000
-val_interval: 50            # PPO iterations between held-out evaluations (+ checkpoint)
+val_interval: 50            # PPO iterations between held-out evaluations (+ policy snapshot)
+obs_rms_warmup_steps: 0     # 0 = authors (normalization only from PPO iteration 10). >0: estimate stats from this
+                            # many vec-steps of SVO heuristics before training. Use ~200 for short runs (<30k steps).
+checkpoint_every: 10        # PPO iterations between resumable checkpoints (runs/<name>/checkpoint.pt)
 
 data:
   tartan_dir: data/TartanAir
   svo_params: tartan_train.yaml
   calib: data/calibration/tartan_pinhole.yaml
+  # Held out in addition to the authors' (DPVO) test split -> 6 val / 18 train trajectories on our 3-scene subset
+  extra_val_trajs: [japanesealley/Easy/P003, carwelding/Easy/P005, westerndesert/Easy/P004]
 
 agent:                       # authors' values
   n_epochs: 10

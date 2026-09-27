@@ -14,10 +14,26 @@ from env.utils.compute_error import ate_translation
 from env.utils.trajectory_alignment import align_umeyama
 
 
-def evaluate(env, policy=None, max_steps=None, device="cpu"):
+MIN_SEGMENT = 10  # poses; shorter tracked segments are too short to align and count as untracked for ate_all
+
+
+def _aligned_sq_errors(gt, pos):
+    """Sim3-align pos to gt (Umeyama) and return squared position errors per pose."""
+    s, R, tr = align_umeyama(gt[None], pos[None])
+    aligned = s[0] * np.matmul(R[0], pos[:, :, None]).squeeze(2) + tr[0]
+    return ((aligned - gt) ** 2).sum(1)
+
+
+def evaluate(env, policy=None, max_steps=None, device="cpu", deterministic=True):
     """Run every validation trajectory of `env` (mode='val') once from its start.
 
-    policy=None -> SVO heuristics (use_RL_actions=False). Returns a list of per-trajectory dicts.
+    policy=None -> SVO heuristics (use_RL_actions=False). deterministic=False samples actions from the policy.
+    Returns a list of per-trajectory dicts with:
+      ate            authors' metric: ATE of the first sub-trajectory before any tracking failure
+      first_sub_frac share of the sequence that segment covers
+      ate_all        coverage-aware: every tracked segment between failures aligned separately (>= MIN_SEGMENT poses),
+                     length-weighted RMSE over all of them
+      ate_all_cov    share of the sequence covered by those segments
     """
     n = env.num_envs
     lengths = env.dataloader.nr_samples_per_traj.astype(int)
@@ -39,7 +55,7 @@ def evaluate(env, policy=None, max_steps=None, device="cpu"):
     for t in range(T):
         if policy is not None:
             with th.no_grad():
-                actions, _, _ = policy.forward(obs_as_tensor(obs, device), deterministic=True)
+                actions, _, _ = policy.forward(obs_as_tensor(obs, device), deterministic=deterministic)
             actions = actions.cpu().numpy()
         else:
             actions = np.zeros([n, env.action_dim], dtype=np.int64)
@@ -62,22 +78,35 @@ def evaluate(env, policy=None, max_steps=None, device="cpu"):
             break
 
     results = []
-    first_sub = np.cumsum(dones, axis=1) == 0
+    seg_id = np.cumsum(dones, axis=1)
+    first_sub = seg_id == 0
     for i in range(n):
-        m = first_sub[i] & valid[i] & (np.abs(pos[i]).sum(1) != 0)
+        has_pose = np.abs(pos[i]).sum(1) != 0
+        m = first_sub[i] & valid[i] & has_pose
         ate = np.nan
         if m.sum() > 3:
-            s, R, tr = align_umeyama(gt[None, i, m], pos[None, i, m])
-            aligned = s[0] * np.matmul(R[0], pos[i, m, :, None]).squeeze(2) + tr[0]
-            ate = float(np.asarray(ate_translation(gt[None, i, m], aligned[None])).ravel()[0])
+            ate = float(np.asarray(ate_translation(gt[None, i, m], _aligned_pose(gt[i, m], pos[i, m])[None])).ravel()[0])
+        sq, used = [], 0
+        for k in np.unique(seg_id[i, :max(steps[i], 1)]):
+            mk = (seg_id[i] == k) & valid[i] & has_pose
+            if mk.sum() >= MIN_SEGMENT:
+                sq.append(_aligned_sq_errors(gt[i, mk], pos[i, mk]))
+                used += int(mk.sum())
         L = max(steps[i], 1)
         results.append(dict(
             trajectory=names[i], frames=int(lengths[i]), steps=int(steps[i]),
             ate=ate,
             first_sub_frac=float(m.sum() / L),        # fraction of the sequence covered by the ATE segment
+            ate_all=float(np.sqrt(np.concatenate(sq).mean())) if sq else np.nan,
+            ate_all_cov=float(used / L),
             tracked_frac=float(valid[i].sum() / L),
             failures=int(fails[i].sum()),
             keyframe_rate=float(kf[i].sum() / max(valid[i].sum(), 1)),
             ms_per_step=1e3 * float(np.mean(t_step)) / n,
         ))
     return results
+
+
+def _aligned_pose(gt, pos):
+    s, R, tr = align_umeyama(gt[None], pos[None])
+    return s[0] * np.matmul(R[0], pos[:, :, None]).squeeze(2) + tr[0]

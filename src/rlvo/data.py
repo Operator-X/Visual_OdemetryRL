@@ -1,12 +1,21 @@
 """Dataloaders: TartanAir with K future poses (for a longer-horizon privileged critic) + image augmentation."""
 import os
 
+import cv2
 import numpy as np
 import torch
 
 import rlvo  # noqa: F401  (sets up sys.path for svo_env and reference/)
 import svo_env
-from dataloader.tartan_loader import TartanLoader
+from dataloader.tartan_loader import TartanLoader, test_split
+
+
+def split_trajectories(data_dir, extra_val=()):
+    """(train, val) trajectory dirs: val = the authors' (DPVO) test split + our extra held-out trajectories."""
+    keys = list(test_split) + list(extra_val)
+    trajs = sorted(str(t) for t in __import__("pathlib").Path(data_dir).glob("*/*/P*"))
+    val = [t for t in trajs if any(k in t for k in keys)]
+    return [t for t in trajs if t not in val], val
 
 
 class TartanLoaderK(TartanLoader):
@@ -15,9 +24,13 @@ class TartanLoaderK(TartanLoader):
     With K=1 the output is identical to the reference loader ([n, 2, 7]).
     """
 
-    def __init__(self, root_path, mode, num_envs, val_traj_ids=None, traj_name=None, n_future=1):
+    def __init__(self, root_path, mode, num_envs, val_traj_ids=None, traj_name=None, n_future=1, extra_val=()):
         self.n_future = n_future
+        self.extra_val = list(extra_val)
         super().__init__(root_path, mode, num_envs, val_traj_ids, traj_name)
+
+    def is_test_scene(self, scene):
+        return super().is_test_scene(scene) or any(x in scene for x in self.extra_val)
 
     def _pose_key(self, traj_path):
         return '_'.join(traj_path.split(os.sep)[2:])  # same (path-depth dependent) key as the reference
@@ -65,6 +78,13 @@ class PhotometricAugmenter:
         self.gamma = np.ones(num_envs)
         self.noise = np.zeros(num_envs)
         self.resample(np.ones(num_envs, dtype=bool))
+        self._x = np.arange(256, dtype=np.float32) / 255.0
+        self._bank = None  # unit-variance noise images, created lazily for the image size (fast vs per-pixel RNG)
+
+    def _noise(self, shape):
+        if self._bank is None or self._bank.shape[1:] != shape:
+            self._bank = self.rng.standard_normal((16,) + shape, dtype=np.float32)
+        return self._bank[self.rng.integers(len(self._bank))]
 
     def resample(self, mask):
         k = int(mask.sum())
@@ -76,12 +96,12 @@ class PhotometricAugmenter:
     def __call__(self, images, new_seq):
         self.resample(np.asarray(new_seq, dtype=bool))
         out = np.empty_like(images)
-        x = np.arange(256, dtype=np.float32) / 255.0
         for i in range(self.n):
             g = self.gain[i] * (1.0 + self.rng.uniform(-self.jitter, self.jitter))
-            lut = np.clip(255.0 * g * np.power(x, self.gamma[i]), 0, 255)
-            img = lut[images[i, :, :, 0]]
+            lut = np.clip(255.0 * g * np.power(self._x, self.gamma[i]), 0, 255).astype(np.uint8)
+            img = cv2.LUT(images[i, :, :, 0], lut)
             if self.noise[i] > 0:
-                img = img + self.rng.normal(0.0, self.noise[i], img.shape).astype(np.float32)
-            out[i, :, :, 0] = np.clip(img, 0, 255).astype(np.uint8)
+                f = cv2.scaleAdd(self._noise(img.shape), float(self.noise[i]), img.astype(np.float32))
+                img = cv2.convertScaleAbs(cv2.max(f, 0.0))   # clamp at 0, then saturating cast to uint8
+            out[i, :, :, 0] = img
         return out

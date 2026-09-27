@@ -20,7 +20,7 @@ import rlvo  # noqa: E402
 from policies.attention_policy import CustomActorCriticPolicy  # noqa: E402
 from rlvo.env import RLVOEnv  # noqa: E402
 from rlvo.evaluate import evaluate  # noqa: E402
-from rlvo.train import env_config, load_config, make_policy_kwargs  # noqa: E402
+from rlvo.train import env_config, load_config, make_policy_kwargs, set_svo_threads  # noqa: E402
 
 DATASETS = {
     "tartanair": dict(dir="data/TartanAir", params="tartan_train.yaml", calib="data/calibration/tartan_pinhole.yaml"),
@@ -31,16 +31,19 @@ _glog = [True]
 
 
 def make_val_env(cfg, dataset):
+    set_svo_threads(cfg)
     d = DATASETS[dataset]
     data = str(ROOT / d["dir"])
+    extra_val = []
     if dataset == "tartanair":
-        from dataloader.tartan_loader import test_split
-        n = sum(1 for t in Path(data).glob("*/*/P*") if any(s in str(t) for s in test_split))
+        from rlvo.data import split_trajectories
+        extra_val = list(cfg.data.get("extra_val_trajs", []))
+        n = len(split_trajectories(data, extra_val)[1])
     else:
         from dataloader.euroc_loader import test_split
         n = sum(1 for s in test_split if (Path(data) / s).is_dir())
     env = RLVOEnv(str(rlvo.SVO_PARAMS / d["params"]), str(ROOT / d["calib"]), data, n, 'val', env_config(cfg),
-                  initialize_glog=_glog[0], dataset=dataset)
+                  initialize_glog=_glog[0], dataset=dataset, extra_val=extra_val)
     _glog[0] = False
     return env
 
@@ -61,9 +64,12 @@ def main():
     ap.add_argument("--checkpoint", default="final")
     ap.add_argument("--repeats", type=int, default=3)
     ap.add_argument("--out-tag", default="default", help="results go to results/eval/<dataset>/<out-tag>/")
+    ap.add_argument("--stochastic", action="store_true",
+                    help="sample actions instead of argmax (writes to <out-tag>_stoch)")
     args = ap.parse_args()
 
-    out_dir = ROOT / "results" / "eval" / args.dataset / args.out_tag
+    tag = args.out_tag + ("_stoch" if args.stochastic else "")
+    out_dir = ROOT / "results" / "eval" / args.dataset / tag
     out_dir.mkdir(parents=True, exist_ok=True)
     jobs = [("heuristic", None)] if args.heuristic else []
     jobs += [(Path(r).name, Path(r)) for r in args.runs]
@@ -75,14 +81,16 @@ def main():
         rows = []
         for rep in range(args.repeats):
             env.seed(rep)
-            for r in evaluate(env, policy):
+            for r in evaluate(env, policy, deterministic=not args.stochastic):
                 rows.append({"run": name, "repeat": rep, **r})
         with open(out_dir / f"{name}.csv", "w", newline="") as f:
             w = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
             w.writeheader()
             w.writerows(rows)
         ates = [r["ate"] for r in rows]
-        print(f"{name:28s} mean ATE {sum(a for a in ates if a == a) / max(1, sum(a == a for a in ates)):.3f} "
+        alls = [r["ate_all"] for r in rows if r["ate_all"] == r["ate_all"]]
+        print(f"{name:28s} ATE {sum(a for a in ates if a == a) / max(1, sum(a == a for a in ates)):.3f} "
+              f"| ATE_all {sum(alls) / max(1, len(alls)):.3f} "
               f"| tracked {sum(r['tracked_frac'] for r in rows) / len(rows):.3f} "
               f"| failures {sum(r['failures'] for r in rows) / args.repeats:.1f}/run")
         del env
