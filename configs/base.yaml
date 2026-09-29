@@ -10,6 +10,8 @@ total_timesteps: 1000000
 val_interval: 50            # PPO iterations between held-out evaluations (+ policy snapshot)
 obs_rms_warmup_steps: 0     # 0 = authors (normalization only from PPO iteration 10). >0: estimate stats from this
                             # many vec-steps of SVO heuristics before training. Use ~200 for short runs (<30k steps).
+init_policy: null           # e.g. runs/bc_rules_s0: start from that policy + its obs stats (behavior-cloning warm start)
+critic_warmup_iters: 0      # >0: freeze the actor for this many PPO updates so the critic can catch up first
 checkpoint_every: 10        # PPO iterations between resumable checkpoints (runs/<name>/checkpoint.pt)
 
 data:

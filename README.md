@@ -16,10 +16,12 @@ The project is a course project, with the goal of a paper. It runs **natively on
 | Authors' training environment running on real TartanAir data | ✅ ~1,270 env-steps/s rollout, ~600 steps/s training |
 | Training / evaluation / comparison / plotting pipeline | ✅ |
 | 11 proposed modifications, each a config switch | ✅ implemented, tested at small scale |
-| Small-scale pilot comparisons (20k steps) | ✅ pipeline validated, early signals only |
+| Small-scale pilot comparisons (20k steps) | ✅ pipeline validated (archived: superseded by later runs) |
 | TUM-RGBD: SVO rules reproduce the paper's SVO row | ✅ 7/8 sequences finished, 8% mean deviation (tuned SVO settings) |
 | EuRoC evaluation | ⏳ download blocked by the host's rate limit |
-| Full-length training runs (multi-seed) | ⏳ not started |
+| First PPO training (400k / 1.5M steps) | ✅ as robust as tuned SVO rules with ~half the keyframes, ~5-8% less accurate |
+| Reward diagnosis + reward experiment (3 seeds) | ✅ no reward variant beats the baseline yet; keyframe rate collapses to extremes |
+| Keyframe-budget control (constrained RL) | ⏳ next |
 
 ## What we changed relative to the authors
 
@@ -63,9 +65,26 @@ grid-searched too). The result is saved as `svo_env/param/tum_tuned.yaml` and is
 | xyz | 0.066 | 0.057 | | 360 | fails once/run | 0.186 |
 | floor | fails | fails | | | | |
 
+## Training results so far
+TUM-RGBD, same tuned SVO settings for everyone, ATE on the 5 sequences every method finishes (3 repeats):
+
+| Method | ATE [m] | Keyframe rate |
+|---|---|---|
+| SVO rules | **0.510** | 0.29 |
+| PPO baseline (400k steps, 3 seeds) | 0.539 ± 0.015 | 0.19-0.40 |
+| PPO + 20-frame reward window (3 seeds) | 0.572 ± 0.044 | 0.23-1.00 |
+
+- **Reward diagnosis:** the authors' reward is informative but weak (99.7% of steps get a positive reward on TUM),
+  measures local error rather than drift, and a keyframe's benefit arrives 4-5 frames later, heavily discounted at
+  gamma=0.6.
+- **Every reward change pushes the keyframe rate to an extreme** (the paper's 5e-3 penalty -> almost no keyframes;
+  longer horizons or windows -> a keyframe on every frame). The single keyframe-penalty weight decides which, which
+  motivates controlling the keyframe budget directly.
+- Single-seed results were misleading here: a 1-seed win of the 20-frame window did not hold over 3 seeds.
+
 ## Early findings (small scale, not conclusions)
 Pilot: 20k training steps per variant (<0.1% of the paper's budget), 1 seed, 6 held-out TartanAir trajectories.
-Tables: [`results/tables/`](results/tables/) · learning curves: [`results/figures/`](results/figures/).
+These pilots are archived (superseded): [`archive/`](archive/README.md).
 
 - **The authors' ATE can be gamed by failing early.** It only covers the segment before the first tracking failure.
   A policy that loses tracking immediately gets a tiny, flattering ATE (0.17 m at 6% coverage). We therefore also report
@@ -114,9 +133,10 @@ src/rlvo/             env (reference env + switches), data, train, evaluate
 configs/              base.yaml (authors' setup scaled to 12 envs) + variants/
 scripts/              build, data prep, train, evaluate, compare, plots
 tests/                equivalence with the reference + sanity checks
-docs/modifications.md every change: why, how, where; bugs found
+docs/                 modifications.md (every change + bugs), research_plan.md (next steps), log.md (history)
 paper/notes.md        paper summary, hyperparameters, paper-vs-code discrepancies
-results/              tables and figures (tracked); runs/ and data/ are not tracked
+results/              current tables and figures (tracked); runs/ and data/ are not tracked
+archive/              superseded results, with a README explaining why
 CLAUDE.md             working notes and conventions for this project
 ```
 

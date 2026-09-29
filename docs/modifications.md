@@ -115,3 +115,25 @@ Compare: `scripts/compare.py --tag <tag>` writes `results/tables/<tag>_<dataset>
 | TartanLoader needs #envs <= #train trajectories | bare `StopIteration` | checked with a clear message in our scripts |
 | **Reference bug: GT re-initialization after a failure uses the wrong env's GT.** `reset_dones` passes images/actions for the reset envs only (packed) but GT flags/poses for ALL envs; C++ indexes all with the packed index, so the i-th reset env reads env i's GT | after a real failure SVO re-initializes without (or with wrong) GT, emitting a cascade of spurious "failures". TUM, SVO rules: 46.3 failures/run -> 4.0 with the fix. First-segment ATE unaffected | `env.fix_reset_gt_indexing: true` packs flags/poses correctly (off = reference behaviour) |
 | GT init on frames without GT (TUM floor marks them -1) | SVO aborts: non-unit quaternion check | always on: such frames are never used for GT init |
+
+## macOS / Apple Silicon build of SVO (moved here from CLAUDE.md on 2026-09-29)
+
+- Build: `./scripts/build_svo_mac.sh` → `third_party/svo-lib/build/svo_env/svo_env.cpython-312-darwin.so`
+- Test: `.venv/bin/python scripts/smoke_test_svo.py --envs 12` (synthetic images, no dataset needed)
+- Import in Python: add `third_party/svo-lib/build/svo_env` to `sys.path`, then `import svo_env`
+- Homebrew deps: `cmake eigen@3 opencv@4 boost yaml-cpp libomp suite-sparse glew`.
+  Use **eigen@3** (not Eigen 5) and **opencv@4** (4.14, keg-only). Both are pinned in the build script.
+- Gotchas we fixed (all marked `[rlvo]` in the CMake files):
+  - x86/GCC-only flags removed on arm64; NEON paths enabled (`HAVE_FAST_NEON`); C++17.
+  - Eigen found through CMake, not `/usr/include/eigen3`.
+  - pybind11 3.x needs `Development.Module`.
+  - Link only the needed OpenCV modules.
+  - `-DWITH_GFLAGS=OFF` so the bundled glog doesn't pick up Homebrew gflags (otherwise flags get registered twice at import).
+  - Never add `/opt/homebrew/include` globally: Homebrew's glog/gflags headers would shadow the bundled ones.
+- The pose output buffer (16 values per env) is **column-major**: `T = poses[i].reshape(4,4).T`
+- SVO stages: 0 paused, 1 initializing, 2 tracking, 3 relocalization.
+- **OpenMP:** Homebrew OpenCV -> OpenBLAS -> Homebrew libomp, and pip torch bundles its own libomp. Two runtimes
+  abort with "OMP: Error #15". Fix: `scripts/fix_torch_libomp.sh` symlinks torch's libomp to Homebrew's.
+  **Re-run it after every torch install/upgrade.** Never use `KMP_DUPLICATE_LIB_OK`.
+- `pybind_wrapper.cpp` is patched so `gt_init_pose` accepts non-contiguous arrays (svo_wrapper.py passes a strided view).
+- Harmless warning: `objc: Class CVWindow/AVF... implemented in both` (pip cv2 + Homebrew OpenCV GUI/video classes; unused).

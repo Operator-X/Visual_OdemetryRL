@@ -179,6 +179,55 @@ def warmup_obs_rms(env, val_env, vec_steps):
     print(f"[warmup] obs normalization from {int(vec_steps) * env.num_envs} samples", flush=True)
 
 
+def init_from_policy(model, env, val_env, init_run):
+    """Start PPO from another run's policy (e.g. behavior cloning) and its observation-normalization stats."""
+    init_run = Path(init_run)
+    if not init_run.is_absolute():
+        init_run = rlvo.ROOT / init_run
+    loaded = CustomActorCriticPolicy.load(str(init_run / "Policy" / "final.pth"), device="cpu")
+    model.policy.load_state_dict(loaded.state_dict())
+    stats = np.load(init_run / "Policy" / "final_rms.npz")
+    env.obs_rms.mean, env.obs_rms.var = stats["mean"].reshape(env.obs_rms.mean.shape), stats["var"].reshape(env.obs_rms.var.shape)
+    env.obs_rms.count = 1e4                  # keep updating from these stats instead of starting fresh
+    env.obs_rms_new = env.obs_rms            # same object, as after the reference's update_rms()
+    if val_env is not None:
+        val_env.obs_rms = env.obs_rms
+    print(f"[init] policy + obs stats from {init_run}", flush=True)
+
+
+class CriticWarmupCallback(BaseCallback):
+    """Freeze the actor (shared keypoint encoder, policy MLP, action head) for the first `iters` PPO updates, so the
+    untrained critic can fit the value of the (e.g. behavior-cloned) policy before the policy starts changing."""
+
+    def __init__(self, iters):
+        super().__init__()
+        self.iters, self._updates = int(iters), 0
+
+    def _actor_params(self):
+        p = self.model.policy
+        return (list(p.mlp_extractor.variable_encoder.parameters()) + list(p.mlp_extractor.policy_net.parameters())
+                + list(p.action_net.parameters()))
+
+    def _set(self, trainable):
+        for q in self._actor_params():
+            q.requires_grad_(trainable)
+
+    def _on_training_start(self):
+        if self.iters > 0:
+            self._set(False)
+            print(f"[critic-warmup] actor frozen for {self.iters} PPO updates", flush=True)
+
+    def _on_rollout_start(self):
+        if getattr(self.model, "iteration", 0) > 0 and self.iters > 0:
+            self._updates += 1
+            if self._updates == self.iters:
+                self._set(True)
+                print("[critic-warmup] actor unfrozen", flush=True)
+
+    def _on_step(self):
+        return True
+
+
 class CheckpointCallback(BaseCallback):
     """Saves a resumable checkpoint every `every` PPO updates (at rollout start = right after an update)."""
 
@@ -239,6 +288,8 @@ def train(cfg, run_dir, resume=False):
         wall0 = state["wall_s"]
         env.seed(cfg.seed + state["num_timesteps"])   # fresh SVO randomness after resume
         print(f"[resume] from {state['num_timesteps']} steps", flush=True)
+    elif cfg.get("init_policy", None):
+        init_from_policy(model, env, val_env, cfg.init_policy)
     elif cfg.get("obs_rms_warmup_steps", 0) > 0:
         warmup_obs_rms(env, val_env, cfg.obs_rms_warmup_steps)
     remaining = int(cfg.total_timesteps) - int(model.num_timesteps)
@@ -246,6 +297,8 @@ def train(cfg, run_dir, resume=False):
     if remaining > 0:
         callbacks = [CSVRolloutLogger(str(run_dir / "train.csv"), append=resuming, wall_offset=wall0),
                      CheckpointCallback(env, run_dir, cfg.get("checkpoint_every", 10), wall_offset=wall0)]
+        if not resuming and cfg.get("critic_warmup_iters", 0) > 0:
+            callbacks.append(CriticWarmupCallback(cfg.critic_warmup_iters))
         model.learn(total_timesteps=remaining, log_interval=None, eval_interval=cfg.val_interval,
                     val_env=val_env, callback=callbacks, reset_num_timesteps=not resuming)
     save_checkpoint(model, env, run_dir, wall0 + time.time() - t0)

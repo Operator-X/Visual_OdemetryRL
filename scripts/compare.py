@@ -7,6 +7,7 @@ tracked fraction, failures per trajectory, keyframe rate, final training stats, 
 """
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -23,26 +24,54 @@ def main():
     args = ap.parse_args()
 
     eval_dir = ROOT / "results" / "eval" / args.dataset / args.tag
-    rows = []
+    run_tag = args.tag.removesuffix("_stoch")   # stochastic evals live in <tag>_stoch but runs are <tag>_<variant>_s<seed>
+    frames = []
     for f in sorted(eval_dir.glob("*.csv")):
         df = pd.read_csv(f)
         run = f.stem
-        run_tag = args.tag.removesuffix("_stoch")   # stochastic evals live in <tag>_stoch but runs are <tag>_<variant>
-        variant = "heuristic (SVO rules)" if run == "heuristic" else run.removeprefix(run_tag + "_").removesuffix("_s0")
-        row = dict(variant=variant, ate_m=df["ate"].mean(skipna=True), ate_median_m=df["ate"].median(skipna=True),
-                   ate_coverage=df["first_sub_frac"].mean(),   # share of the sequence the ATE segment covers
-                   ate_all_m=df["ate_all"].mean(skipna=True) if "ate_all" in df else np.nan,
-                   ate_all_cov=df["ate_all_cov"].mean() if "ate_all_cov" in df else np.nan,
-                   tracked=df["tracked_frac"].mean(), failures_per_traj=df["failures"].mean(),
-                   keyframe_rate=df["keyframe_rate"].mean())
-        run_dir = ROOT / "runs" / run
-        if (run_dir / "train.csv").exists():
-            tr = pd.read_csv(run_dir / "train.csv")
-            last = tr.tail(max(1, len(tr) // 4))   # last quarter of training
-            meta = json.loads((run_dir / "meta.json").read_text())
-            row.update(train_reward=last["reward_per_step"].mean(), train_valid=last["valid_ratio"].mean(),
-                       train_fail_per_1k=last["failures_per_1k"].mean(), steps=int(meta.get("timesteps", 0)),
-                       minutes=60 * meta.get("train_hours", np.nan))
+        m = re.search(r"_s(\d+)$", run)
+        df["seed"] = int(m.group(1)) if m else 0
+        df["variant"] = "heuristic (SVO rules)" if run == "heuristic" else re.sub(r"_s\d+$", "", run.removeprefix(run_tag + "_"))
+        df["run"] = run
+        frames.append(df)
+    if not frames:
+        sys.exit(f"no evaluation CSVs in {eval_dir}")
+    D = pd.concat(frames, ignore_index=True)
+
+    # paper-style: a trajectory is finished if it has no failure in any repeat (per variant+seed)
+    fin = D.groupby(["variant", "seed", "trajectory"])["failures"].max().eq(0)
+    fin_all = fin.groupby("trajectory").all()                 # finished by every variant and seed
+    common = list(fin_all[fin_all].index)
+
+    rows = []
+    for variant, dv in D.groupby("variant", sort=False):
+        per_seed = []
+        for seed, ds in dv.groupby("seed"):
+            per_seed.append(dict(finished=int(fin.loc[variant, seed].sum()),
+                                 ate_common=ds[ds.trajectory.isin(common)]["ate"].mean() if common else np.nan,
+                                 failures=ds["failures"].mean()))
+        ps = pd.DataFrame(per_seed)
+        row = dict(variant=variant, seeds=len(ps), finished=ps["finished"].mean(), finished_of=D.trajectory.nunique(),
+                   ate_common_m=ps["ate_common"].mean(), ate_common_sd=ps["ate_common"].std() if len(ps) > 1 else np.nan,
+                   ate_m=dv["ate"].mean(skipna=True), ate_median_m=dv["ate"].median(skipna=True),
+                   ate_coverage=dv["first_sub_frac"].mean(),
+                   ate_all_m=dv["ate_all"].mean(skipna=True) if "ate_all" in dv else np.nan,
+                   ate_all_cov=dv["ate_all_cov"].mean() if "ate_all_cov" in dv else np.nan,
+                   tracked=dv["tracked_frac"].mean(), failures_per_traj=dv["failures"].mean(),
+                   failures_sd=ps["failures"].std() if len(ps) > 1 else np.nan,
+                   keyframe_rate=dv["keyframe_rate"].mean())
+        tr_rows = []
+        for run in dv["run"].unique():
+            run_dir = ROOT / "runs" / run
+            if (run_dir / "train.csv").exists():
+                tr = pd.read_csv(run_dir / "train.csv")
+                last = tr.tail(max(1, len(tr) // 4))   # last quarter of training
+                meta = json.loads((run_dir / "meta.json").read_text())
+                tr_rows.append(dict(train_reward=last["reward_per_step"].mean(), train_valid=last["valid_ratio"].mean(),
+                                    train_fail_per_1k=last["failures_per_1k"].mean(), steps=int(meta.get("timesteps", 0)),
+                                    minutes=60 * meta.get("train_hours", np.nan)))
+        if tr_rows:
+            row.update(pd.DataFrame(tr_rows).mean().to_dict())
         rows.append(row)
     if not rows:
         sys.exit(f"no evaluation CSVs in {eval_dir}")
@@ -53,6 +82,7 @@ def main():
     t = t.sort_values(["_o", "variant"]).drop(columns="_o").reset_index(drop=True)
     if "baseline" in set(t["variant"]):
         b = t[t["variant"] == "baseline"].iloc[0]
+        t["d_ate_common_%"] = 100 * (t["ate_common_m"] - b["ate_common_m"]) / b["ate_common_m"]
         t["d_ate_%"] = 100 * (t["ate_m"] - b["ate_m"]) / b["ate_m"]
         t["d_ate_all_%"] = 100 * (t["ate_all_m"] - b["ate_all_m"]) / b["ate_all_m"]
         t["d_tracked_pts"] = 100 * (t["tracked"] - b["tracked"])
@@ -62,7 +92,10 @@ def main():
     t.to_csv(out / f"{args.tag}_{args.dataset}.csv", index=False)
     md = t.to_markdown(index=False, floatfmt=".3f")
     (out / f"{args.tag}_{args.dataset}.md").write_text(
-        f"# {args.tag} — {args.dataset}\n\nATE: first sub-trajectory before a tracking failure (authors' metric), "
+        f"# {args.tag} — {args.dataset}\n\n**Headline:** `finished` = trajectories with no tracking failure in any repeat "
+        f"(the paper's criterion, averaged over seeds); `ate_common_m` = mean ATE on the {len(common)} trajectories that "
+        f"EVERY method and seed finishes ({', '.join(common)}), so accuracy is compared on identical, fully tracked "
+        f"sequences.\n\nATE: first sub-trajectory before a tracking failure (authors' metric), "
         f"mean over held-out trajectories x repeats. `d_*` columns are relative to the baseline.\n\n"
         f"**Read ATE together with `ate_coverage`:** a policy that fails early gets a short first segment and a small, "
         f"flattering ATE. Only compare ATE between runs with similar coverage.\n"

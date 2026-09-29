@@ -1,0 +1,7 @@
+# Reward over a 20-frame window instead of 5 (align on 5 points instead of 3), so it measures drift, not only local
+# error. Under SVO rules (TartanAir train): median window error 0.17 m and 53% below the 0.2 m threshold (5-frame
+# window: 0.02 m, 93%), so the unchanged threshold now discriminates. From the reward diagnosis (2026-09-29).
+env:
+  reward:
+    traj_length: 20
+    nr_points_for_align: 5

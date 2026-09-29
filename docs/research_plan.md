@@ -7,12 +7,17 @@
   coverage-aware `ate_all`), comparison tables, learning-curve plots. Details in `docs/modifications.md`.
 - Bugs found in the reference and fixed: GT re-initialization mis-indexing (on by default), obs normalization starting
   late (warm-up option), GT init on frames without GT, plus the ARM-only SVO crash.
-- **No real training yet.** Only 20k-step pilots (<0.1% of the paper's budget); their numbers are hints, not results.
+- **First real training done (2026-09-28/29):** PPO baseline at 400k and 1.5M steps, a reward diagnosis, and a reward
+  experiment (5 setups; baseline and long_window with 3 seeds). Result: PPO is as robust as the tuned SVO rules with
+  ~half the keyframes, but ~5-8% less accurate; no reward variant beats the baseline robustly, because every change
+  pushes the keyframe rate to an extreme. Details: `docs/log.md`, `results/tables/reward1_*`, `results/reward_diagnosis/`.
+- **Current next idea:** control the keyframe budget directly (constrained RL / Lagrangian penalty to a target rate
+  ~0.25-0.3), or a keyframe-penalty sweep with long_window. Step 1 below is done (kept for the record).
 - EuRoC: download blocked by the ETH host's rate limit (`scripts/download_euroc.sh` ready; or download
   machine_hall.zip, vicon_room1.zip, vicon_room2.zip in a browser from
   https://www.research-collection.ethz.ch/handle/20.500.11850/690084 into `data/_zips/euroc/`).
 
-## Step 1 (next): first real training experiment, ~1.5 h unattended
+## Step 1 (DONE 2026-09-29, see log): first real training experiment
 Question: does the RL agent beat SVO's rules (the paper: 10-19% better on desk, desk2, plant, teddy), and does any of
 our changes beat the authors' setup?
 
