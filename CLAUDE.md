@@ -178,3 +178,18 @@ writeup/      Course report + paper draft
 - 2026-09-27: **User decision: tum_tuned is the standard for TUM.** `evaluate.py --dataset tum` now uses tum_tuned.yaml
   (for SVO rules AND RL agents); the authors' untuned file is `--dataset tum_default`. Earlier TUM results
   (results/eval/tum/tum_check*, tum_full) were produced with the untuned file and the buggy re-init.
+- 2026-09-28/29: **First real PPO run** (runs/ppo15_s0, baseline + fix, 1 seed, obs warm-up; 400k steps, then resumed
+  to 1.5M). TUM vs SVO rules (tum_tuned, 3 reps; results/eval/tum/ppo15*, svo_rules_std):
+  400k: 7/9 finished, 2.3 failures/run (rules 3.0), keyframe rate 0.19 (rules 0.29), ATE on commonly finished seqs +8% vs rules.
+  1.5M: 6/9 finished, 3.7 failures/run, keyframe rate 0.15, ATE +11%. Training reward/step FLAT at ~0.0011 from ~250k
+  on, while the keyframe rate keeps falling (0.49 -> 0.20). Interpretation: with the authors' reward the accuracy
+  term barely discriminates (0.2 m threshold saturates), so PPO keeps optimizing the keyframe penalty. Robust with
+  half the keyframes (reproduces the paper's efficiency claim), but no accuracy gain. Longer training alone is not the
+  fix at our scale. Next: reward variants (normalized_error, failure_penalty, no keyframe penalty) x seeds.
+  Note: on resume the linear LR schedule restarts from the new total (LR jumped back up at 402k).
+- 2026-09-29: **Reward diagnosis** (scripts/reward_diagnosis.py, results/reward_diagnosis/summary.md, no training).
+  The authors' reward ranks strategies correctly but weakly (rewards differ ~5% vs ATE up to 2x; 99.7% of steps
+  positive on TUM). The 5-frame window measures local error, not drift: always-keyframe has the lowest window error but
+  the worst ATE. A keyframe's benefit is delayed (effect size -0.02 at k=1 -> +0.16 at k=5), and gamma=0.6 weights k=4-5
+  at 0.08-0.13 -> explains PPO cutting keyframes. normalized_error doesn't help (same effect sizes). ate_all is also
+  gamed with many failures. Priorities: gamma 0.9/0.99, longer reward window (traj_length ~20), failure penalty.

@@ -77,6 +77,127 @@ Cost: ~20 min per method at 200k steps x 3 seeds, so 10-12 methods is ~4 h of co
 Implementation of 1-5: ~1-2 days. Caveat to state in the paper: small budgets favor fast learners, so report learning
 curves and frame the study as "at a limited compute budget".
 
+## Catalog of viable AI methods (added 2026-09-28)
+The problem: at every frame, choose SVO settings (keyframe yes/no, grid size, optionally the detector threshold) from
+what SVO observes, to maximize accuracy and robustness.
+
+**Properties of our setup that decide viability:**
+- Few discrete actions: 2 x 5 = 10 combinations (50 with the threshold).
+- Slow simulator: ~1,200 SVO steps/s on the Mac, so sample efficiency matters.
+- **SVO's internal state can't be saved/restored.** No trying both actions from the same moment: this rules out
+  search/planning (MCTS) and counterfactual "what if" labels.
+- Ground truth is available during training (privileged critic).
+- Synthetic training (TartanAir), real evaluation (TUM, EuRoC).
+- The agent only acts while SVO tracks (masked rollout buffer).
+
+Legend: ✅ good fit, 🟡 possible with caveats, ❌ poor fit here.
+
+### 1. RL, on-policy
+| Method | Fit | Notes |
+|---|---|---|
+| PPO (authors) | ✅ | baseline; masked buffer + privileged critic built |
+| A2C | ✅ | simpler PPO; small effort |
+| TRPO | 🟡 | rarely better than PPO; low value |
+| Recurrent PPO (LSTM/GRU) | ✅ | real memory; medium-large effort (masking + memory) |
+| Phasic Policy Gradient | 🟡 | more stable value learning; medium effort |
+
+### 2. RL, off-policy (reuses experience, key with a slow simulator)
+| Method | Fit | Notes |
+|---|---|---|
+| DQN + Double/Dueling + n-step | ✅ | small discrete action set; likely much more sample-efficient than PPO |
+| Branching DQN (one head per action type) | ✅ | keyframe x grid x threshold without enumerating combinations |
+| Rainbow / distributional (QR-DQN, IQN) | ✅ | QR-DQN in sb3-contrib; robust to noisy rewards |
+| Discrete SAC | 🟡 | often unstable with discrete actions |
+| IMPALA / V-trace | ❌ | built for many machines; no gain on one Mac |
+
+### 3. Bandits (no planning)
+| Method | Fit | Notes |
+|---|---|---|
+| Contextual bandit (neural, LinUCB, Thompson sampling) | ✅ | gamma=0.6 is almost a bandit already; tests whether planning matters; small effort |
+
+### 4. Learning from demonstrations
+| Method | Fit | Notes |
+|---|---|---|
+| Behavior cloning of SVO's rules, then RL fine-tuning | ✅ | starts as good as SVO instead of random; small-medium effort |
+| DAgger | ❌ | needs an expert labeling arbitrary states; the only expert is SVO's rules |
+| GAIL / inverse RL | ❌ | no better-than-rules demonstrations |
+
+### 5. Offline RL (log data once, train many policies without SVO)
+| Method | Fit | Notes |
+|---|---|---|
+| CQL / IQL on logged SVO runs (rules + random actions) | ✅ | dataset once (hours), then each method trains in minutes; scales well for a comparative study |
+| Decision Transformer | 🟡 | same data; weak when logged behavior is weak |
+
+### 6. Gradient-free / black-box optimization
+| Method | Fit | Notes |
+|---|---|---|
+| Bayesian optimization / CMA-ES of SVO thresholds | ✅ | strongest non-RL baseline (a well-tuned fixed rule); our grid search was a mini version |
+| Evolution strategies on policy weights | 🟡 | parallel, noise-robust; practical only for small (linear/MLP) policies |
+| Genetic programming of keyframe rules | 🟡 | readable evolved rules; harder to tune |
+
+### 7. Supervised learning (predict, then decide with a rule)
+| Method | Fit | Notes |
+|---|---|---|
+| Failure predictor + threshold rule | ✅ | classifier "tracking fails within N frames" from SVO signals -> keyframe when risk is high; simple, interpretable |
+| Error regressor (predict near-future drift) | 🟡 | same idea, noisier target |
+| Hindsight labels from trying both actions | ❌ | impossible: SVO state can't be restored |
+
+### 8. Problem reformulations (combine with any algorithm)
+| Method | Fit | Notes |
+|---|---|---|
+| Constrained RL (Lagrangian PPO: max accuracy s.t. keyframe rate / runtime <= budget) | ✅ | cleaner than hand-tuning the keyframe penalty, which collapsed in the pilots |
+| Multi-objective RL (policy conditioned on an accuracy/speed weight) | ✅ | one run gives the whole accuracy-vs-runtime curve; strong for a paper |
+| Hierarchical RL (choose a setting regime every N frames) | 🟡 | fewer decisions; may lose fast reactions |
+| Safe RL / shielding (fall back to SVO's rules when unsure) | ✅ | "never worse than the rules"; practical for deployment |
+
+### 9. Model-based RL / planning
+| Method | Fit | Notes |
+|---|---|---|
+| Dreamer-style world models | ❌ | SVO's internal state (map, depth filters) too complex to model |
+| MCTS / MuZero | ❌ | needs simulator save/restore |
+| Learned failure model + short-horizon planning | 🟡 | light version of 7 |
+
+### 10. Policy architecture
+| Method | Fit | Notes |
+|---|---|---|
+| Plain MLP on summary features | ✅ | is the authors' attention encoder needed? |
+| Perceiver / attention over keypoints (authors) | ✅ | baseline |
+| Transformer / graph network over keypoints | 🟡 | richer; small gains likely at our budget |
+| Recurrent (LSTM/GRU) | ✅ | see 1 |
+| CNN on raw images | 🟡 | more information, larger sim-to-real gap, slower |
+
+### 11. Generalization and robustness
+| Method | Fit | Notes |
+|---|---|---|
+| Domain randomization | ✅ | built (`augment`) |
+| Curriculum (easy -> hard trajectories) | ✅ | cheap; may help early learning |
+| Meta-RL / fast adaptation to new scenes | 🟡 | research-grade, expensive |
+| Test-time adaptation | 🟡 | adapts online to real data; fragile |
+
+### 12. Interpretability
+| Method | Fit | Notes |
+|---|---|---|
+| Distill the trained policy into a decision tree (VIPER) | ✅ | "what did RL learn?" as readable rules, possibly a better hand-written SVO heuristic |
+| Symbolic regression of a keyframe rule | 🟡 | similar goal, harder |
+
+### 13. Not viable here
+- LLM/VLM agents: far too slow for per-frame decisions at 20-30 FPS; not suited to numeric control.
+- Replacing SVO with learned VO (DPVO, DROID-SLAM): a different problem (the "other backend" direction).
+
+### Strongest mix for a comparative study (value for effort)
+1. PPO (baseline)
+2. DQN-family (sample efficiency)
+3. Contextual bandit (does planning matter?)
+4. BC from SVO's rules, then RL (warm start)
+5. Offline RL (IQL/CQL) on logged data (cheap to compare many methods)
+6. Bayesian optimization of static rules ("do we need learning?")
+7. Supervised failure predictor (simplest learned alternative)
+8. Constrained or multi-objective PPO (accuracy vs runtime)
+9. Decision-tree distillation (interpretability)
+
+This covers every major family, each answering one clear question. It supersedes the shorter "Suggested study" list
+above. The user still has to choose what to include (see open decisions).
+
 ## Already-publishable side findings
 - The authors' ATE (first segment before any failure) can be gamed by failing early. We propose coverage-aware reporting.
 - Reference bug: GT re-initialization after failures mis-indexed (46 -> 4 failures/run on TUM when fixed).
@@ -87,6 +208,6 @@ curves and frame the study as "at a limited compute budget".
 
 ## Open decisions (ask the user)
 1. Go-ahead for step 1 (~1.5 h unattended) and the 4 setups.
-2. Which techniques from step 2 to include (suggested: 1-6 above).
+2. Which methods to include in the comparative study (see "Catalog of viable AI methods"; suggested: the 9-item mix).
 3. Course deadline and target venue (workshop / RA-L / ICRA-IROS). This sets how deep and long the runs should be.
 4. EuRoC: retry the script, or download via a browser.

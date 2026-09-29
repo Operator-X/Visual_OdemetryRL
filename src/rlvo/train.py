@@ -120,7 +120,8 @@ class RLVOPPO(PPO):
             for r in res:
                 w.writerow({"iteration": self.iteration, "timesteps": self.num_timesteps, **r})
         print(f"[eval] {self.num_timesteps} steps: ATE {np.round([r['ate'] for r in res], 3)} "
-              f"ATE_all {np.round([r['ate_all'] for r in res], 3)} tracked {[round(r['tracked_frac'], 2) for r in res]}")
+              f"ATE_all {np.round([r['ate_all'] for r in res], 3)} tracked {[round(r['tracked_frac'], 2) for r in res]}",
+              flush=True)
 
 
 # ------------------------------------------------------------------ checkpoint / resume
@@ -175,7 +176,7 @@ def warmup_obs_rms(env, val_env, vec_steps):
     env.update_rms()                     # obs_rms <- obs_rms_new (same object from now on, as in the reference)
     if val_env is not None:
         val_env.obs_rms = env.obs_rms
-    print(f"[warmup] obs normalization from {int(vec_steps) * env.num_envs} samples")
+    print(f"[warmup] obs normalization from {int(vec_steps) * env.num_envs} samples", flush=True)
 
 
 class CheckpointCallback(BaseCallback):
@@ -237,7 +238,7 @@ def train(cfg, run_dir, resume=False):
         state = load_checkpoint(model, env, val_env, run_dir)
         wall0 = state["wall_s"]
         env.seed(cfg.seed + state["num_timesteps"])   # fresh SVO randomness after resume
-        print(f"[resume] from {state['num_timesteps']} steps")
+        print(f"[resume] from {state['num_timesteps']} steps", flush=True)
     elif cfg.get("obs_rms_warmup_steps", 0) > 0:
         warmup_obs_rms(env, val_env, cfg.obs_rms_warmup_steps)
     remaining = int(cfg.total_timesteps) - int(model.num_timesteps)
