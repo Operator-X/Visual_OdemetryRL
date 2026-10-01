@@ -203,6 +203,32 @@ Legend: ✅ good fit, 🟡 possible with caveats, ❌ poor fit here.
 This covers every major family, each answering one clear question. It supersedes the shorter "Suggested study" list
 above. The user still has to choose what to include (see open decisions).
 
+## Evaluation protocol from now on (bias audit, 2026-10-01)
+A self-audit of all experiments so far found these biases; the rules below fix them for the final results.
+
+| Bias found | Rule from now on |
+|---|---|
+| **TUM is no longer a clean test set:** follow-up experiments were chosen after looking at TUM, and the SVO settings were tuned on TUM | TUM = development set. Final claims on a dataset never looked at before (**EuRoC**). State this in the paper |
+| **Selective follow-up:** methods that looked good after 1 seed got 3 seeds; ones that looked bad were dropped after 1 noisy seed (some under the buggy reset / no obs normalization) | Every method in the final table gets the same seed count (3, ideally 5). Methods screened out on 1 seed are listed as such |
+| **Untuned baseline:** the authors' PPO uses hyperparameters tuned for 100 envs / 25k batch / 25M steps; our methods got small tweaks | Give the authors' PPO an equal small tuning budget (batch size, learning rate), or run it at its own batch size |
+| **Headline metric dominated by high-error sequences** (desk, desk2) and computed only on the survivors (common finished set) | Report the per-sequence geometric-mean ratio vs the rules next to the paper-style mean; show finished/failures prominently |
+| **Inconsistent evaluation mode:** sampled-action results added only when argmax looked bad | Argmax (as the paper) is the headline for every method; sampled reported for every method or for none |
+| **Unequal information / compute:** BC uses demonstrations; the shadow reward sees the rules' outcome every frame (~1.4x compute) | State the extra information and compute per method in the table |
+| **Small evaluation sets:** 6 TartanAir core trajectories; "finished" is coarse | Also report the 13-trajectory set; give intervals over seeds; avoid "most robust" claims without seeds |
+| **Narrative:** summaries led with positives before seeds confirmed them | Claims only after the final protocol; keep negative results in the paper |
+
+Not biased (checked): the DPVO test split is never trained on; the evaluation set stayed fixed when data was added;
+our env equals the authors' with all switches off; the shadow mirror was verified exactly.
+
+Training trends without new training: `scripts/eval_snapshots.sh` evaluates every policy snapshot (90k, 180k, 270k,
+360k steps, and every 90k up to 1.08M plus the 1.5M final for ppo15) -> `scripts/snapshot_trends.py` ->
+`results/tables/snapshot_trends.md`, `results/figures/snapshot_trends.png`. Used to judge which methods are still
+improving (worth long training) and which have plateaued or are drifting.
+**Result (2026-10-02):** snapshot-to-snapshot noise (+-7% TUM ATE for one run, no trend) is as large as the method
+differences, so final-checkpoint numbers are effectively random draws. Rule: report the mean over the last >=3
+snapshots AND over seeds. Only constrained PPO was still clearly improving at 400k (failures falling on both datasets);
+authors' PPO is flat to 1.5M, residual constant, BC -> PPO flat / slowly less robust. Details: docs/log.md.
+
 ## Already-publishable side findings
 - The authors' ATE (first segment before any failure) can be gamed by failing early. We propose coverage-aware reporting.
 - Reference bug: GT re-initialization after failures mis-indexed (46 -> 4 failures/run on TUM when fixed).

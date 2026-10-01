@@ -173,3 +173,39 @@ bottom. Superseded results mentioned here were moved to `archive/` (see `archive
   per traj; 1/6 and 5/13 finished). Interpretation: the relative reward works as a learning signal, but the easiest way
   to beat the rules is more keyframes (they are nearly free in the reward), which hurts slow sequences. Next: shadow
   reward + keyframe budget FROM the shadow (agent keyframes <= the rules' on the same frames; adapts to motion).
+
+## 2026-10-02: Bias audit + snapshot trend analysis (no new training)
+- Bias audit of all experiments -> protocol rules in `docs/research_plan.md` ("Evaluation protocol from now on").
+- `scripts/eval_snapshots.sh` evaluated every saved policy snapshot (90/180/270/360k; ppo15 every 90k to 1.08M + 1.5M
+  final) of 15 runs on TUM + TartanAir core, repeat 0 (~35 min). `scripts/snapshot_trends.py` ->
+  `results/tables/snapshot_trends.md`, `results/figures/snapshot_trends.png`.
+- **Checkpoint noise is as large as the method differences.** ppo15 (authors' PPO) TUM ATE over 11 snapshots from 270k
+  to 1.5M: 0.517 +- 0.037 (range 0.470-0.577) with NO trend; rules 0.523 (repeat 0). Its final checkpoint (0.566) was
+  an unlucky draw: the earlier "PPO is 5-8% less accurate than the rules" is mostly checkpoint noise. Last-checkpoint
+  selection is effectively random at +-7%. -> Report the mean over the last few snapshots (and seeds).
+- Per method (trend, not final value):
+  - Authors' PPO: flat for 1.5M steps (ATE, failures, TartanAir); keyframe rate stable ~0.15-0.2. More steps at this
+    batch size won't help.
+  - Residual RL: literally constant from 90k (always follows the rules).
+  - BC -> PPO: flat; TartanAir failures slowly worse (1.67 -> 1.89/traj, finished 1.7 -> 1.3/6), keyframe rate fixed 0.40.
+  - Constrained PPO (3 scenes, 3 seeds): the ONLY clearly improving method. TUM failures 21 -> 9 -> 9 -> 5 -> 3.7,
+    TartanAir failures 4.3 -> 2.2 -> 1.6 -> 1.1 -> 1.0, finished rising; still improving at 400k.
+    Constrained 7 scenes (1 seed): same early recovery (116 -> 4-5 TUM failures), TartanAir plateau ~2.2 since 180k.
+  - BC -> constrained: no trend, stays worse than the rules.
+  - PPO 7 scenes: keyframe rate 1.0 from the start (collapsed immediately), flat.
+  - Shadow-relative: keyframe rate unstable (0.99 -> 0.44 -> 0.84 -> 0.91), TartanAir robust (~1.0) throughout.
+- **Re-scoring with the new protocol** (`scripts/main_tables.py`, second table in results/tables/main_results.md):
+  each seed = mean over its last 3 snapshots (~270k, ~360k, 400k), eval repeat 0, (checkpoint, sequence) pairs with a
+  failure left out of the ATE; rules repeat 0 = 0.523. Results (TUM 5-seq ATE vs rules / geometric mean of per-seq
+  ratios / TartanAir core failures per traj, rules 1.50):
+  - authors' PPO (1 seed, last 3 of 1.5M): -0.3% / 0.96 / 1.00 with ~half the keyframes (0.16 vs 0.30); all 11
+    snapshots from 270k: -1.2% / 0.96 / 1.26. **The "PPO is 5-8% less accurate" claim does not hold; PPO ~= rules.**
+  - BC -> PPO (3 seeds): -1.4% +- 5% / **1.11 (worse per sequence)** / 1.87. **The "-4%, beats the rules" claim does
+    not hold**; it was final-checkpoint luck + the desk-dominated mean.
+  - Constrained PPO (3 seeds): +0.2% / 0.99 / 1.20; failures on TUM higher (5.9/run, one seed's early snapshots fail).
+  - Residual = rules exactly. BC -> constrained (1 seed): -2.2% / 1.08 / 1.89.
+  - 7 scenes (1 seed each): PPO +2.8% / 1.20 / 1.06; BC -> PPO +0.1% / 1.15 / 2.00; constrained -6.5% / 1.02 / 2.33;
+    shadow-relative +11.9% / 1.30 / 1.00.
+  - **Bottom line: no method beats SVO's tuned rules on TUM accuracy beyond noise.** The robust finding is efficiency/
+    robustness: PPO matches the rules with ~half the keyframes and fewer TartanAir failures.
+  - Also: eval-seed noise for the rules alone (teddy 0.776 repeat 0 vs 0.659 repeats 1-2).

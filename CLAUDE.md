@@ -12,16 +12,18 @@ every design choice needs a reason we can write up.
 ## Current state (2026-09-29)
 - **Setup validated on real data:** SVO's own rules on TUM-RGBD reproduce the paper's Table 2 SVO row (7/8 sequences
   finished, 8% mean deviation) with `tum_tuned.yaml`. Reference: `results/eval/tum/svo_rules_std`.
-- **PPO (authors' setup + our fixes):** as robust as the tuned SVO rules with ~half the keyframes, but ~5-8% LESS
-  accurate. Longer training (1.5M) does not help: reward/step is flat, the keyframe rate keeps falling.
+- **2026-10-02 re-scoring (checkpoint-averaged, see docs/log.md): no method beats the tuned rules on TUM accuracy
+  beyond noise; final-checkpoint numbers are +-7% random draws. Claims below marked (final ckpt) are superseded.**
+- **PPO (authors' setup + our fixes):** as robust as the tuned SVO rules with ~half the keyframes; (final ckpt) ~5-8% less
+  accurate, but checkpoint-averaged ~= rules. Longer training (1.5M) does not help: reward/step is flat, the keyframe rate keeps falling.
 - **Reward diagnosis:** the authors' reward is informative but weak (99.7% of steps positive on TUM), measures local
   (5-frame) error rather than drift, and a keyframe's benefit comes 4-5 frames later (discounted away at gamma=0.6).
 - **Reward experiment (reward1, 3 seeds for baseline/long_window):** no variant beats the baseline robustly. Every reward
   change pushes the keyframe rate to an extreme (penalty 5e-3 -> ~no keyframes; long_window / gamma 0.9-0.99 -> keyframe
   every frame). The keyframe penalty weight decides the extreme. **Next idea: control the keyframe budget directly**
   (constrained RL / Lagrangian penalty to a target rate ~0.25-0.3) or a penalty sweep.
-- **Behavior cloning -> PPO (3 seeds): beats PPO from scratch (-9%) and SVO's rules (-4%) on the paper's metric in
-  every seed** (TUM ATE 0.488 +- 0.019 vs rules 0.510), no keyframe collapse. Gain concentrated on desk (-32%); worse on
+- **Behavior cloning -> PPO (3 seeds):** (final ckpt) beat PPO from scratch (-9%) and SVO's rules (-4%); checkpoint-averaged
+  only -1.4% and 11% WORSE per sequence (geometric mean) -> not a real gain (TUM ATE 0.488 +- 0.019 vs rules 0.510), no keyframe collapse. Gain concentrated on desk (-32%); worse on
   plant (+27%) and xyz (+90%, inherited from the clone's extra keyframes); geometric-mean per-seq ratio ~ PPO scratch.
   BUT on held-out TartanAir BC+PPO is LESS robust than PPO scratch and the rules (all 3 seeds) -> dataset-dependent.
   A fixed higher keyframe penalty (5e-4) overshoots (keyframe rate 0.20, more failures). Next: target-rate control
@@ -69,6 +71,8 @@ notebooks/    empty for now
 - SVO: `scripts/build_svo_mac.sh`, `scripts/smoke_test_svo.py --envs 12`. Data: `download_tartanair.sh` + `tartan_to_gray.py`, `download_tum.sh`, `download_euroc.sh`
 
 ## Conventions (what "standard" means now)
+- **Score a run by the mean over its last >=3 policy snapshots (and >=3 seeds), never the final checkpoint alone.**
+  Report the geometric-mean per-sequence ratio next to the paper-style mean. TUM is a development set (we tuned on it).
 - **Headline metrics:** `finished` (sequences with zero failures, the paper's criterion) and `ate_common` (ATE on the
   sequences EVERY method/seed finishes). The authors' first-segment ATE and our `ate_all` can both be gamed by failing
   (early failure -> short easy segment; many failures -> many easy short segments). Always report failures/coverage.

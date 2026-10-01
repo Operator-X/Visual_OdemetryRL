@@ -29,8 +29,8 @@ rules on the same images. [Final claims depend on the remaining experiments.]
    penalty weight decides which. Also the mechanism behind sim-to-real failures.
 4. **Methodological issues found:** a GT re-initialization bug in the reference code (failure counts inflated ~11x);
    the first-segment ATE can be gamed by failing early (we report coverage-aware metrics and "finished" counts).
-5. **Fixes studied (comparative):** behavior-cloning warm start (most accurate on TUM, -4% vs rules, 3 seeds; less
-   robust on TartanAir), constrained PPO with a PI-controlled Lagrangian keyframe price (matches the tuned rules on TUM,
+5. **Fixes studied (comparative):** behavior-cloning warm start (final checkpoint -4% vs rules, but checkpoint-averaged
+   -1.4% and worse per sequence; less robust on TartanAir), constrained PPO with a PI-controlled Lagrangian keyframe price (matches the tuned rules on TUM,
    most robust on TartanAir, 3 seeds), residual RL (collapses to the rules), and the **shadow-SVO rule-relative reward**
    (new; beats the rules on training data, most robust, but by adding keyframes).
 
@@ -58,6 +58,9 @@ rules on the same images. [Final claims depend on the remaining experiments.]
 - Figure: reward diagnosis (strategy reward vs ATE; decision effect size vs delay k with gamma weights).
 - Figure: constrained PPO keyframe rate vs target and lambda over training (runs/constrained_lw_s*/lagrange.csv).
 - Figure: shadow-relative reward rising above zero during training (runs/shadow_rel_v2_s0/train.csv).
+
+6. **Evaluation noise:** final-checkpoint ATE varies +-7% between consecutive snapshots with no trend, as large as
+   the method differences; checkpoint averaging overturns two of our own earlier conclusions.
 
 ## Open items before writing results sections
 - [ ] Shadow reward + keyframe budget from the shadow (+ 20-frame window): does it beat the rules on TUM?

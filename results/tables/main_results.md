@@ -20,3 +20,21 @@ TUM-RGBD: ATE [m] averaged over desk, desk2, plant, teddy, xyz (the sequences ev
 | Shadow-relative reward | 7 scenes | 1 | 0.594 | +16.5% | 7.0 | 3.0 | 0.91 | 1.71 | 1.0 / 6 | 0.78 | 5.0 / 13 | 0.90 |
 
 *Paper rows are relative to OUR tuned SVO rules (the paper's own SVO baseline is 0.545 on these sequences; their RL-SVO is -14.5% vs their SVO).
+
+## Checkpoint-averaged results (protocol of 2026-10-02)
+
+The final checkpoint alone is a random draw (one run's TUM ATE varies +-7% between consecutive snapshots with no trend; see results/tables/snapshot_trends.md). Here each seed is scored by the MEAN over its last 3 policy snapshots (~270k, ~360k, 400k steps), evaluation repeat 0 only (the rules row too), then mean ± std over seeds. 'geo vs rules' = geometric mean over the 5 sequences of the per-sequence ATE ratio to the rules (not dominated by desk/desk2). 'common failed' = how many of the 5 common sequences had a failure; such (checkpoint, sequence) pairs are left out of the ATE (first-segment ATE would flatter them). Runs without snapshots (reward1 runs, BC clone) are not in this table.
+
+| Method | Train data | Seeds x ckpts | TUM ATE [m] | vs rules | geo vs rules | common failed /5 | TUM finished /9 | TUM failures/run | Keyframe rate | TartanAir core finished /6 | core failures/traj |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| SVO rules (tuned), repeat 0 | - | 1 | 0.523 | +0.0% | 1.000 | 0 | 7 | 3.0 | 0.30 | 2 | 1.50 |
+| PPO, authors' setup (last 3 of 1.5M) | 3 scenes | 1 x 3 | 0.522 | -0.3% | 0.959 | 0.0 | 6.7 | 3.7 | 0.16 | 2.3 | 1.00 |
+| PPO, authors' setup (all 11 from 270k-1.5M) | 3 scenes | 1 x 11 | 0.517 | -1.2% | 0.956 | 0.0 | 6.9 | 3.2 | 0.17 | 2.1 | 1.26 |
+| BC -> PPO | 3 scenes | 3 x 3 | 0.516 ± 0.026 | -1.4% | 1.109 ± 0.051 | 0.1 ± 0.2 | 7.0 ± 0.3 | 4.0 ± 0.3 | 0.40 ± 0.05 | 1.1 ± 0.7 | 1.87 ± 0.03 |
+| Residual RL over the rules | 3 scenes | 3 x 3 | 0.523 ± 0.000 | +0.0% | 1.000 ± 0.000 | 0.0 ± 0.0 | 7.0 ± 0.0 | 3.0 ± 0.0 | 0.30 ± 0.00 | 1.9 ± 0.2 | 1.52 ± 0.03 |
+| Constrained PPO (kf rate 0.30) | 3 scenes | 3 x 3 | 0.524 ± 0.015 | +0.2% | 0.993 ± 0.047 | 0.8 ± 1.3 | 6.0 ± 1.5 | 5.9 ± 4.2 | 0.27 ± 0.05 | 2.6 ± 0.8 | 1.20 ± 0.45 |
+| BC -> constrained PPO | 3 scenes | 1 x 3 | 0.511 | -2.2% | 1.076 | 0.3 | 5.0 | 5.7 | 0.28 | 0.7 | 1.89 |
+| PPO, authors' setup | 7 scenes | 1 x 3 | 0.538 | +2.8% | 1.204 | 0.0 | 6.7 | 2.7 | 0.94 | 2.7 | 1.06 |
+| BC -> PPO | 7 scenes | 1 x 3 | 0.523 | +0.1% | 1.148 | 0.0 | 6.3 | 4.7 | 0.46 | 1.3 | 2.00 |
+| Constrained PPO (kf rate 0.30) | 7 scenes | 1 x 3 | 0.489 | -6.5% | 1.024 | 0.0 | 6.3 | 4.7 | 0.24 | 1.0 | 2.33 |
+| Shadow-relative reward | 7 scenes | 1 x 3 | 0.586 | +11.9% | 1.302 | 0.0 | 6.3 | 4.0 | 0.85 | 2.3 | 1.00 |
