@@ -24,6 +24,9 @@ data:
   calib: data/calibration/tartan_pinhole.yaml
   # Held out in addition to the authors' (DPVO) test split -> 6 val / 18 train trajectories on our 3-scene subset
   extra_val_trajs: [japanesealley/Easy/P003, carwelding/Easy/P005, westerndesert/Easy/P004]
+  # Evaluation set stays FIXED when more data is downloaded: only held-out trajectories matching these are evaluated
+  # (= the same 6 as before). Other held-out trajectories (e.g. DPVO test split in new scenes / Hard) are not trained on.
+  val_include: [japanesealley/Easy, carwelding/Easy, westerndesert/Easy]
 
 agent:                       # authors' values
   n_epochs: 10
@@ -57,5 +60,6 @@ env:
   residual: false                # true = residual RL over SVO's rules (configs/variants/residual.yaml)
   residual_grid_idx: 2
   override_penalty: 0.0
+  shadow_reward: false          # true = reward relative to a shadow SVO running the rules (configs/variants/shadow_rel.yaml)
   kf_target: null                # float = constrained RL: keyframe rate target (penalty becomes a PI-controlled multiplier)
   fix_reset_gt_indexing: true    # ON by default (our fix of the reference GT re-init indexing bug, docs/modifications.md); false = authors

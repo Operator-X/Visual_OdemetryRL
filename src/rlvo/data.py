@@ -10,12 +10,22 @@ import svo_env
 from dataloader.tartan_loader import TartanLoader, test_split
 
 
-def split_trajectories(data_dir, extra_val=()):
-    """(train, val) trajectory dirs: val = the authors' (DPVO) test split + our extra held-out trajectories."""
+def _matches(traj, patterns):
+    return any(p in traj for p in patterns)
+
+
+def split_trajectories(data_dir, extra_val=(), val_include=None):
+    """(train, val) trajectory dirs.
+
+    Held out (never trained on) = the authors' (DPVO) test split + our extra held-out trajectories.
+    val = the held-out ones that also match `val_include` (None = all held out). Held-out trajectories outside
+    val_include are simply unused, so the evaluation set stays fixed when more data is downloaded.
+    """
     keys = list(test_split) + list(extra_val)
     trajs = sorted(str(t) for t in __import__("pathlib").Path(data_dir).glob("*/*/P*"))
-    val = [t for t in trajs if any(k in t for k in keys)]
-    return [t for t in trajs if t not in val], val
+    held_out = [t for t in trajs if _matches(t, keys)]
+    val = [t for t in held_out if val_include is None or _matches(t, val_include)]
+    return [t for t in trajs if t not in held_out], val
 
 
 class TartanLoaderK(TartanLoader):
@@ -24,13 +34,28 @@ class TartanLoaderK(TartanLoader):
     With K=1 the output is identical to the reference loader ([n, 2, 7]).
     """
 
-    def __init__(self, root_path, mode, num_envs, val_traj_ids=None, traj_name=None, n_future=1, extra_val=()):
+    def __init__(self, root_path, mode, num_envs, val_traj_ids=None, traj_name=None, n_future=1, extra_val=(),
+                 val_include=None):
         self.n_future = n_future
         self.extra_val = list(extra_val)
+        self.val_include = None if val_include is None else list(val_include)
         super().__init__(root_path, mode, num_envs, val_traj_ids, traj_name)
 
     def is_test_scene(self, scene):
         return super().is_test_scene(scene) or any(x in scene for x in self.extra_val)
+
+    def extract_trajectories(self):
+        # Reference logic + val_include filter (the reference asserts before we could filter, so reimplemented).
+        train, val = split_trajectories(self.root_path, self.extra_val, self.val_include)
+        if self.mode == 'train':
+            self.trajectories_paths = train
+        elif self.mode == 'val':
+            self.trajectories_paths = sorted(val)
+            if self.val_traj_ids != -1 and self.val_traj_ids is not None:
+                self.trajectories_paths = [self.trajectories_paths[i] for i in self.val_traj_ids]
+            assert self.num_envs == len(self.trajectories_paths), (self.num_envs, len(self.trajectories_paths))
+        else:
+            raise ValueError(f'Mode {self.mode} not defined')
 
     def _pose_key(self, traj_path):
         return '_'.join(traj_path.split(os.sep)[2:])  # same (path-depth dependent) key as the reference

@@ -26,13 +26,19 @@ every design choice needs a reason we can write up.
   BUT on held-out TartanAir BC+PPO is LESS robust than PPO scratch and the rules (all 3 seeds) -> dataset-dependent.
   A fixed higher keyframe penalty (5e-4) overshoots (keyframe rate 0.20, more failures). Next: target-rate control
   (constrained RL) or residual RL on top of the rules. Related work: docs/related_work.md. `scripts/bc.py`, then `train.py --set init_policy=runs/bc_rules_s0 critic_warmup_iters=5`.
-- **Residual RL over the rules (1 seed):** learns to always follow the rules (identical results); overrides don't pay
+- **Residual RL over the rules (3 seeds):** learns to always follow the rules (identical results); overrides don't pay
   with the authors' reward. Reward signal = the bottleneck. Next: residual + long_window / gamma 0.9.
-- **Constrained PPO (PI-Lagrangian keyframe-rate target 0.30, 20-frame window, 1 seed):** the constraint holds (no
-  collapse), most robust method on TartanAir (3/6 finished), but TUM accuracy +6% vs rules.
+- **Constrained PPO (PI-Lagrangian keyframe-rate target 0.30, 20-frame window, 3 seeds): best all-rounder.** TUM
+  0.518 +- 0.019 (rules 0.510, within noise; PPO scratch 0.539), TartanAir 2.3/6 finished, 1.00 failures/traj (rules 1, 1.50).
 - **BC + constrained (1 seed): failed.** The rate target held in training, but on TUM the policy keyframes ~0.20 ->
   poor robustness. A fixed keyframe-rate target doesn't transfer across datasets. Next idea: constrain the OUTCOME
   (failure rate) instead, or a motion-dependent target.
+- **More data (7 scenes, 1 seed):** no clear accuracy gain; PPO from scratch learns to keyframe EVERY frame and becomes
+  the most robust on hard held-out TartanAir (7/13 vs rules 2/13) at ~14% more SVO time; constrained v2 matches the
+  rules on TUM (0.509) but is less robust on hard motion. Next: failure-rate (outcome) constraint.
+- **Shadow-SVO relative reward (new, 1 seed, 7 scenes):** reward = agent minus a shadow SVO running the rules on the same
+  images (exact mirror verified). Learns to beat the rules on training data and has the fewest failures on TartanAir,
+  but by keyframing much more -> worse on slow TUM seqs. Next: shadow reward + keyframe budget taken from the shadow.
 - EuRoC not downloaded: the ETH host rate-limits our IP (see research_plan.md for options).
 
 ## Layout
@@ -47,7 +53,7 @@ tests/        test_env.py: env == reference with all switches off; sanity checks
 docs/         research_plan.md, log.md, modifications.md
 results/      current tables/figures/evals (tracked). archive/ = superseded results (tracked, see archive/README.md)
 runs/         training runs (gitignored); runs/archive/ old runs, runs/logs/ run logs
-data/         datasets (gitignored): TartanAir (3 Easy scenes), TUM-RGBD (9 seqs), calibration/, logs/, _zips/
+data/         datasets (gitignored): TartanAir (7 scenes after the 2026-10-01 download), TUM-RGBD (9 seqs), calibration/, logs/, _zips/
 notebooks/, writeup/   empty for now
 ```
 
@@ -64,6 +70,9 @@ notebooks/, writeup/   empty for now
 - **Headline metrics:** `finished` (sequences with zero failures, the paper's criterion) and `ate_common` (ATE on the
   sequences EVERY method/seed finishes). The authors' first-segment ATE and our `ate_all` can both be gamed by failing
   (early failure -> short easy segment; many failures -> many easy short segments). Always report failures/coverage.
+- **TartanAir evaluation set is FIXED** (`data.val_include` in base.yaml = the 6 held-out Easy trajectories of our first
+  3 scenes), even as more scenes are downloaded. Other held-out trajectories (DPVO test split in new scenes / Hard) are
+  never trained on; `evaluate.py --tartan-val all` evaluates on all of them (results tag `<tag>_valall`).
 - **TUM:** `--dataset tum` = `tum_tuned.yaml` (quality_min_fts 25), for SVO rules AND agents. `tum_default` = authors' file.
 - **base.yaml** = authors' setup scaled to 12 envs, PLUS: `env.fix_reset_gt_indexing: true` (our fix of a reference
   bug), `svo_threads: 12`, 6 held-out TartanAir trajectories (18 train). `EnvConfig()` defaults = pure reference

@@ -33,6 +33,11 @@ DATASETS = {
 }
 
 _glog = [True]
+# TartanAir evaluation sets: "core" = the fixed 6 held-out Easy trajectories of our first 3 scenes (all results so far);
+# "all" = every held-out trajectory present on disk (more scenes + Hard). Default: the run's config (core).
+CORE_VAL = ["japanesealley/Easy", "carwelding/Easy", "westerndesert/Easy"]
+TARTAN_VAL = {"core": CORE_VAL, "all": None}
+_tartan_val = ["config"]
 
 
 def make_val_env(cfg, dataset, data_dir=None):
@@ -43,7 +48,12 @@ def make_val_env(cfg, dataset, data_dir=None):
     if dataset == "tartanair":
         from rlvo.data import split_trajectories
         extra_val = list(cfg.data.get("extra_val_trajs", []))
-        n = len(split_trajectories(data, extra_val)[1])
+        if _tartan_val[0] == "config":   # runs from before val_include existed -> the fixed core set
+            val_include = cfg.data.get("val_include", CORE_VAL)
+            val_include = None if val_include is None else list(val_include)
+        else:
+            val_include = TARTAN_VAL[_tartan_val[0]]
+        n = len(split_trajectories(data, extra_val, val_include)[1])
     else:
         mod = __import__("dataloader.euroc_loader" if dataset == "euroc" else "dataloader.tum_loader",  # tum, tum_default
                          fromlist=["test_split"])
@@ -51,7 +61,8 @@ def make_val_env(cfg, dataset, data_dir=None):
         if n == 0:
             raise SystemExit(f"no {dataset} sequences found in {data}")
     env = RLVOEnv(str(rlvo.SVO_PARAMS / d["params"]), str(ROOT / d["calib"]), data, n, 'val', env_config(cfg),
-                  initialize_glog=_glog[0], dataset=dataset.split("_")[0], extra_val=extra_val)
+                  initialize_glog=_glog[0], dataset=dataset.split("_")[0], extra_val=extra_val,
+                  val_include=val_include if dataset == "tartanair" else None)
     _glog[0] = False
     return env
 
@@ -72,12 +83,15 @@ def main():
     ap.add_argument("--checkpoint", default="final")
     ap.add_argument("--repeats", type=int, default=3)
     ap.add_argument("--out-tag", default="default", help="results go to results/eval/<dataset>/<out-tag>/")
+    ap.add_argument("--tartan-val", default="config", choices=["config", "core", "all"],
+                    help="TartanAir evaluation set (core = fixed 6 trajectories; all = every held-out one on disk)")
     ap.add_argument("--data-dir", default=None, help="override the dataset folder (e.g. a folder of complete sequences)")
     ap.add_argument("--stochastic", action="store_true",
                     help="sample actions instead of argmax (writes to <out-tag>_stoch)")
     args = ap.parse_args()
 
-    tag = args.out_tag + ("_stoch" if args.stochastic else "")
+    _tartan_val[0] = args.tartan_val
+    tag = args.out_tag + ("_stoch" if args.stochastic else "") + ("_valall" if args.tartan_val == "all" else "")
     out_dir = ROOT / "results" / "eval" / args.dataset / tag
     out_dir.mkdir(parents=True, exist_ok=True)
     jobs = [("heuristic", None)] if args.heuristic else []

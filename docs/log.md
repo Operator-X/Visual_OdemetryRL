@@ -139,3 +139,37 @@ bottom. Superseded results mentioned here were moved to `archive/` (see `archive
   more keyframes). Every method that cut keyframes lost robustness on the harder-motion dataset. Better: constrain the
   OUTCOME (failure rate <= X, minimize keyframes) or use a motion-dependent target.
   Also: constrained_lw sampled on TUM: 5/9 finished, 5.3 failures (argmax 6/9, 2.7).
+- 2026-10-01: **3 seeds for constrained PPO and residual RL** (all methods now 3 seeds; TUM ATE on the 5 seqs every run
+  finishes; TartanAir finished/6 and failures/traj): SVO rules 0.510 | 1, 1.50. PPO scratch 0.539 +- 0.015 | 2.0, 1.02.
+  BC+PPO 0.488 +- 0.019 | 0.3, 1.85. **Constrained 0.518 +- 0.019 | 2.3, 1.00** (rate constraint held in every seed:
+  0.301/0.298/0.295). Residual 0.510 +- 0 (all seeds identical to the rules) | 1.0, 1.52.
+  Conclusion: no method strictly dominates the (TUM-tuned) rules. Constrained PPO = best all-rounder (matches the rules
+  on TUM, most robust on TartanAir, same keyframe budget, no penalty tuning); BC+PPO = most accurate on TUM, least robust
+  on TartanAir; residual = always follows the rules.
+- 2026-10-01: **More training data (user chose the ~24 GB medium set):** Hard versions of japanesealley, carwelding,
+  westerndesert + Easy and Hard of office, seasidetown, seasonsforest, endofworld (3 -> 7 scenes). Evaluation set kept
+  FIXED via `data.val_include` (same 6 trajectories); new held-out trajectories are excluded from training and available
+  via `evaluate.py --tartan-val all`. Old run configs default to the core set.
+- 2026-10-01: **More data (7 scenes Easy+Hard, 89 train trajectories, 58k frames; 1 seed; *_v2 runs).** BC clone v2:
+  90.2% keyframe accuracy. TUM ATE (5 common seqs) 3-scene -> 7-scene: BC 0.520 -> 0.541; PPO scratch 0.551 -> 0.547
+  (keyframe rate -> 1.00!); constrained 0.540 -> 0.509 (= rules, but 5/9 finished, keyframes 0.23 on TUM); BC+PPO 0.467
+  (best seed; mean 0.488) -> 0.535. TartanAir core / all-13 held-out (incl. Hard): PPO scratch v2 (always keyframe) is
+  by far the most robust: 3/6 and 7/13 finished, 1.00 failures/traj (rules 1/6, 2/13, 1.5-1.95), at ~14% more SVO time
+  per frame (1.66 vs 1.46 ms). Constrained v2 (fixed 30%) less robust on hard motion (2/13, 2.49).
+  Interpretation: harder training data teaches "more keyframes = safer"; the reward has almost no runtime cost, so
+  the agent buys robustness with keyframes. A fixed rate target fights this. Strongly motivates an OUTCOME constraint
+  (failures <= X, minimize keyframes). Note: a ~6 min stall at the start of bc_ppo_v2 (likely macOS indexing the new files).
+- 2026-10-01: **Shadow-SVO relative reward** (env.shadow_reward, configs/variants/shadow_rel.yaml, class ShadowSVO in
+  env.py). A second SVO instance per env runs the rules on the same images; reward = (agent position reward - shadow's) -
+  lambda*(agent actual keyframes - shadow's); the privileged critic also sees the shadow's error. Getting an EXACT
+  mirror needed: same-frame GT re-init after failures, seeding the shadow identically, charging actual keyframes on
+  both sides, the reference's "valid = tracking now and before" for the keyframe charge, and position reward also while
+  relocalizing (as the reference). Verified: rules-following agent -> relative reward exactly 0 on 7,200/7,200 steps.
+  ~390 training steps/s (two SVOs). Starting reward/step is negative (random policy < rules), the goal is > 0.
+- 2026-10-01: **Shadow-relative PPO, 7 scenes, 1 seed** (runs/shadow_rel_v2_s0). Training relative reward rose from
+  -0.00013 to slightly > 0 (first agent to beat the rules on its training data), failures 5.3 -> 2.7/1k, keyframe rate
+  ~0.53 (rules ~0.33). TUM: argmax 0.594 (+16%, keyframes 0.91), sampled 0.536 (+5%, kf 0.69; desk -21%, desk2 -4%,
+  teddy +3%, plant +79%, xyz +121%), 2.7 failures/run (fewest). TartanAir: fewest failures (core 0.78, all-13 0.90
+  per traj; 1/6 and 5/13 finished). Interpretation: the relative reward works as a learning signal, but the easiest way
+  to beat the rules is more keyframes (they are nearly free in the reward), which hurts slow sequences. Next: shadow
+  reward + keyframe budget FROM the shadow (agent keyframes <= the rules' on the same frames; adapts to motion).

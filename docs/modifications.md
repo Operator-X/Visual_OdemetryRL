@@ -100,6 +100,14 @@ Compare: `scripts/compare.py --tag <tag>` writes `results/tables/<tag>_<dataset>
 
 | `obs_rms_warmup_steps` (off by default) | the reference PPO activates observation normalization only at PPO iteration 10, so short runs never normalize and variants with large extra inputs start biased (extra_obs: 21% keyframes before any learning). A warm-up of 200 vec-steps of SVO heuristics fixes it (49%). Use it for all short tests. |
 
+## Reward relative to SVO's rules (`shadow_reward`)
+- **Why:** the reward diagnosis showed scene difficulty dominates the reward (99.7% of steps positive on TUM), so the
+  effect of a single keyframe decision is buried in noise.
+- **How:** a "shadow" SVO runs SVO's rules on the same images. reward = (agent position reward - shadow's) -
+  lambda * (agent keyframes - shadow keyframes). Hard stretches hurt both and cancel. Positive reward = beating the rules.
+  The privileged critic additionally sees the shadow's current error.
+- **Check:** an agent that follows the rules gets exactly 0 reward (7,200 steps). Cost: ~1.4x slower training.
+
 ## Not implemented (documented future work)
 - **A different VO backend** (DSO, ORB-SLAM3, DPVO). RL-SVO is far behind modern learned VO (EuRoC 0.97 m vs DPVO
   0.105 m). This is probably the most publishable direction, and a project of its own.

@@ -1,0 +1,6 @@
+# Reward RELATIVE to SVO's rules: a "shadow" SVO runs the rules on the same images; reward =
+# (agent position reward - shadow's) - lambda*(agent keyframes - shadow keyframes). Cancels scene difficulty, the main
+# source of reward noise (reward diagnosis). Verified: if the agent follows the rules, the reward is exactly 0
+# (600 steps x 12 envs). The privileged critic also sees the shadow's position error. Authors' 5-frame window.
+env:
+  shadow_reward: true

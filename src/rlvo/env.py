@@ -12,6 +12,9 @@ Modifications (see docs/modifications.md for motivation):
   augment                  photometric domain randomization on training images
   residual                 residual RL over SVO's rules: action per frame = follow rule / force keyframe / force no
                            keyframe (grid size stays at the rules' value); keyframe penalty on ACTUAL keyframes
+  shadow_reward            reward RELATIVE to SVO's rules: a second "shadow" SVO runs the rules on the same images;
+                           reward = (agent position reward - shadow position reward) - lambda*(agent kf - shadow kf).
+                           Cancels scene difficulty; the privileged critic also sees the shadow's error.
   kf_target                constrained RL: the keyframe penalty becomes a Lagrange multiplier (env.kf_lambda) that a
                            PI controller in train.py adjusts after every rollout so the keyframe rate tracks the target
 """
@@ -61,6 +64,7 @@ class EnvConfig:
     residual_grid_idx: int = 2           # grid size used when overriding (2 -> 30 px = the rules' tartan/tum value)
     override_penalty: float = 0.0        # optional cost per override (prefers the rules when in doubt)
     kf_target: object = None             # None = fixed penalty; float = target keyframe rate (constrained RL)
+    shadow_reward: bool = False          # reward relative to a shadow SVO running the rules (train mode only)
 
 
 def _invalid_gt(gt):
@@ -69,9 +73,89 @@ def _invalid_gt(gt):
     return np.all(gt == -1, axis=1) | (np.abs(q - 1.0) > 1e-3)
 
 
+class ShadowSVO:
+    """A second SVO instance per env that always runs SVO's own rules on the same images (train mode).
+
+    Mirrors the reference bookkeeping for its own resets, GT initialization and the sliding-window position error,
+    so its per-step position reward is computed exactly like the agent's.
+    """
+
+    def __init__(self, params, calib, n, reward_cfg, delta_time):
+        import svo_env
+        self.env = svo_env.SVOEnv(params, calib, n, False)
+        self.n, self.r, self.dt = n, reward_cfg, delta_time
+        W = reward_cfg.traj_length
+        self.positions = np.zeros([n, W, 3])
+        self.gt_positions = np.zeros([n, W, 3])
+        self.env_steps = np.zeros(n)
+        self.timestamps = np.zeros(n)
+        self.stage = np.ones(n, dtype=int)
+        self.prev_valid = np.zeros(n, dtype=bool)
+        self.reset(np.ones(n, dtype=bool))
+
+    def reset(self, mask):
+        if mask.any():
+            self.env.reset(np.nonzero(mask)[0].astype(np.float64))
+            for b in (self.positions, self.gt_positions):
+                b[mask] = 0
+            self.env_steps[mask] = 0
+            self.timestamps[mask] = 0
+            self.stage[mask] = 1
+            self.prev_valid[mask] = False
+
+    def step(self, images, gt_poses, new_seq):
+        """One frame for all envs; returns (position reward, position error, keyframe made, tracking valid)."""
+        n, r = self.n, self.r
+        self.reset(np.asarray(new_seq, dtype=bool))
+        use_gt = (self.stage == 1) & ~_invalid_gt(gt_poses)
+        poses, obs = np.zeros([n, 16]), np.zeros([n, N_BASE_FIXED + N_KEYPOINT_OBS])
+        dones, stages, runtime = np.zeros(n), np.zeros(n), np.zeros(n)
+        self.env.step(images, self.timestamps.copy(), np.zeros([n, 2]), np.zeros(n), poses, obs, dones, stages, runtime,
+                      use_gt.astype(np.float64), np.ascontiguousarray(gt_poses))
+        self.stage = stages.astype(int)
+        kf = obs[:, 1] == 0
+        failed = dones.astype(bool)
+        if failed.any():
+            # like RLVOEnv.reset_dones (fixed indexing): restart and re-initialize on the SAME frame from GT
+            self.reset(failed)
+            k = int(failed.sum())
+            gt_k = np.ascontiguousarray(gt_poses[failed])
+            st_k = np.zeros(k)
+            self.env.env_step(np.nonzero(failed)[0].astype(np.float64), np.ascontiguousarray(images[failed]),
+                              self.timestamps[failed].copy(), np.zeros([k, 2]), np.zeros(k), np.zeros([k, 16]),
+                              np.zeros([k, N_BASE_FIXED + N_KEYPOINT_OBS]), np.zeros(k), st_k, np.zeros(k),
+                              (~_invalid_gt(gt_k)).astype(np.float64), gt_k)
+            self.stage[failed] = st_k.astype(int)
+        self.timestamps += self.dt
+        valid = (self.stage == 2) & ~failed                 # = reference svo_valid_stage (used for the buffer)
+        acted = valid & self.prev_valid                     # = reference valid_stages (tracking now and before)
+        self.prev_valid = valid.copy()
+        # sliding-window buffer, same semantics as the reference update_alignment_buffer
+        W = r.traj_length
+        full = (self.env_steps >= W) & valid
+        if full.any():
+            self.positions[full, :-1] = self.positions[full, 1:]
+            self.gt_positions[full, :-1] = self.gt_positions[full, 1:]
+        if valid.any():
+            idx = np.minimum(self.env_steps[valid], W - 1).astype(int)
+            rows = np.nonzero(valid)[0]
+            self.positions[rows, idx] = poses[valid, -4:-1]
+            self.gt_positions[rows, idx] = gt_poses[valid, :3]
+            self.env_steps[valid] += 1
+        pos_reward, err = np.zeros(n), np.zeros(n)
+        m = ~failed & (self.env_steps > r.nr_points_for_align)   # reference: not done (even while relocalizing)
+        if m.any():
+            k = r.nr_points_for_align
+            sc, R, t = align_umeyama(self.gt_positions[m, :k], self.positions[m, :k])
+            aligned = sc[:, None] * np.matmul(R, poses[m, -4:-1, None]).squeeze(2) + t
+            err[m] = np.sqrt(((aligned - gt_poses[m, :3]) ** 2).sum(1))
+            pos_reward[m] = np.maximum(r.error_threshold - err[m], -1) * r.align_reward
+        return pos_reward, err, kf & acted, acted
+
+
 class RLVOEnv(VecSVOEnv):
     def __init__(self, params_yaml_path, calib_yaml_path, dataset_dir, num_envs, mode, cfg: EnvConfig,
-                 initialize_glog=False, val_traj_ids=None, dataset='tartanair', seed=0, extra_val=()):
+                 initialize_glog=False, val_traj_ids=None, dataset='tartanair', seed=0, extra_val=(), val_include=None):
         self.cfg = cfg
         r = cfg.reward
         ref_reward = SimpleNamespace(align_reward=r.align_reward, keyframe_reward=r.keyframe_reward,
@@ -82,7 +166,7 @@ class RLVOEnv(VecSVOEnv):
             # Built BEFORE the reference __init__, which is told an unknown dataset name so it keeps this loader
             # (the reference loader would assert on the authors' fixed val split).
             self.dataloader = TartanLoaderK(dataset_dir, mode, num_envs, val_traj_ids,
-                                            n_future=cfg.critic_horizon, extra_val=extra_val)
+                                            n_future=cfg.critic_horizon, extra_val=extra_val, val_include=val_include)
             ref_dataset = '__rlvo_prebuilt__'
         super().__init__(params_yaml_path, calib_yaml_path, dataset_dir, num_envs, mode, ref_reward,
                          initialize_glog=initialize_glog, val_traj_ids=val_traj_ids, dataset=ref_dataset)
@@ -91,7 +175,7 @@ class RLVOEnv(VecSVOEnv):
         self.n_extra = N_EXTRA_OBS if cfg.extra_obs else 0
         self.agent_obs_dim_fixed = N_BASE_FIXED + self.n_extra          # used by the reference normalization
         self.agent_obs_dim = self.agent_obs_dim_fixed + N_KEYPOINT_OBS  # also the size handed to C++
-        self.critique_dim = 1 + 6 * cfg.critic_horizon
+        self.critique_dim = 1 + 6 * cfg.critic_horizon + (1 if cfg.shadow_reward else 0)
         self.obs_rms = RunningMeanStd(shape=(1, self.agent_obs_dim_fixed))
         self.obs_rms_new = RunningMeanStd(shape=[1, self.agent_obs_dim_fixed])
         self.stack = cfg.frame_stack
@@ -121,14 +205,32 @@ class RLVOEnv(VecSVOEnv):
         self.last_info_extra = {}
         self.last_raw_since_kf = np.ones(num_envs)
         self.kf_lambda = float(cfg.reward.keyframe_reward)   # Lagrange multiplier when cfg.kf_target is set
+        self.shadow = None
+        if cfg.shadow_reward and mode == 'train':
+            assert cfg.reward.error_mode == 'absolute' and cfg.reward.rotation_weight == 0, "shadow: absolute reward only"
+            self.shadow = ShadowSVO(params_yaml_path, calib_yaml_path, num_envs, cfg.reward, self.delta_time)
+        self._sh_err = np.zeros(num_envs)
+        self._stash = None
         self.kf_integral = 0.0
+
+    def seed(self, seed=0):
+        super().seed(seed)
+        if self.shadow is not None:
+            self.shadow.env.setSeed(seed)      # same RNG stream as the agent's SVO -> identical when decisions match
 
     # ---------------------------------------------------------------- images
     def get_images_pose(self):
         images, poses, new_seq = super().get_images_pose()
         if self.augmenter is not None:
             images = self.augmenter(images, new_seq)
+        self._stash = (images, poses, np.asarray(new_seq, dtype=bool))
         return images, poses, new_seq
+
+    def _shadow_step(self, gt_poses, force_new=False):
+        images, _, new_seq = self._stash
+        if force_new:
+            new_seq = np.ones(self.num_envs, dtype=bool)
+        return self.shadow.step(np.ascontiguousarray(images), gt_poses, new_seq)
 
     # ---------------------------------------------------------------- observations
     def _reorder(self, obs):
@@ -211,6 +313,8 @@ class RLVOEnv(VecSVOEnv):
                 if rot_mask.any():
                     diff = Rotation.from_quat(gt_poses[rot_mask, 3:]) * Rotation.from_quat(nxt[rot_mask, 3:]).inv()
                     critique_obs[rot_mask, 4 + 6 * k:7 + 6 * k] = diff.as_rotvec()
+        if self.cfg.shadow_reward:
+            critique_obs[:, -1] = self._sh_err if self.mode == 'train' else 0.0
         return np.concatenate([observations, critique_obs], axis=1)
 
     def _stack(self, obs, starts):
@@ -249,6 +353,9 @@ class RLVOEnv(VecSVOEnv):
 
     def reset(self, seed=None, options=None, use_gt_initialization=False):
         obs = super().reset(seed, options, use_gt_initialization)
+        if self.shadow is not None:
+            gt = self._stash[1][:, 0, :] if self._stash[1].ndim == 3 else self._stash[1]
+            self._shadow_step(gt, force_new=True)
         self._fixed_hist[:] = 0.0
         obs = self._stack(obs, np.ones(self.num_envs, dtype=bool))
         self.last_observations = obs
@@ -308,7 +415,10 @@ class RLVOEnv(VecSVOEnv):
                 rotation_reward[pos_mask] = -r.rotation_weight * np.minimum(ang, r.rotation_cap_deg) / r.rotation_cap_deg
 
         lam = self.kf_lambda if self.cfg.kf_target is not None else r.keyframe_reward
-        if self.cfg.residual:
+        if self.shadow is not None:
+            # symmetric with the shadow: charge ACTUAL keyframes on both sides
+            keyframe_reward = -(self.last_raw_since_kf == 0).astype(float) * lam * valid_stages
+        elif self.cfg.residual:
             # penalize ACTUAL keyframes (rule-made or forced), plus an optional cost per override
             actual_kf = (self.last_raw_since_kf == 0).astype(float)
             keyframe_reward = -actual_kf * lam * valid_stages \
@@ -316,6 +426,17 @@ class RLVOEnv(VecSVOEnv):
         else:
             keyframe_reward = -action[:, 0] * lam * valid_stages
         failure_reward = -r.failure_penalty * svo_dones.astype(bool)
+
+        if self.shadow is not None:
+            sh_pos, sh_err, sh_kf, sh_valid = self._shadow_step(gt_poses)
+            self._sh_err = sh_err
+            # relative to the rules: position reward minus the shadow's; keyframes charged relative to the shadow's
+            position_reward = position_reward - sh_pos
+            keyframe_reward = keyframe_reward + lam * sh_kf.astype(float)
+            for i in range(n):
+                info[i]['shadow_position_reward'] = sh_pos[i]
+                info[i]['shadow_keyframe'] = bool(sh_kf[i])
+                info[i]['shadow_valid'] = bool(sh_valid[i])
 
         reward = position_reward + rotation_reward + keyframe_reward + failure_reward
         for i in range(n):
