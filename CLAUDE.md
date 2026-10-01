@@ -54,7 +54,8 @@ docs/         research_plan.md, log.md, modifications.md
 results/      current tables/figures/evals (tracked). archive/ = superseded results (tracked, see archive/README.md)
 runs/         training runs (gitignored); runs/archive/ old runs, runs/logs/ run logs
 data/         datasets (gitignored): TartanAir (7 scenes after the 2026-10-01 download), TUM-RGBD (9 seqs), calibration/, logs/, _zips/
-notebooks/, writeup/   empty for now
+writeup/      outline.md (paper/course-report outline, contributions, planned figures, open items)
+notebooks/    empty for now
 ```
 
 ## Commands
@@ -63,6 +64,7 @@ notebooks/, writeup/   empty for now
 - Many runs: `VARIANTS="baseline long_window" SEEDS="0 1 2" EVAL_DATASETS="tartanair tum" scripts/run_all_variants.sh <tag> <steps> <repeats> obs_rms_warmup_steps=200`
 - Evaluate: `scripts/evaluate.py --runs runs/X [--heuristic] --dataset tum|tartanair|tum_default|euroc --repeats 3 --out-tag <tag> [--stochastic]`
 - Compare: `scripts/compare.py --tag <tag> --dataset <ds>` -> `results/tables/<tag>_<ds>.md` (merges seeds)
+- Main results table for the write-up: `scripts/main_tables.py` -> `results/tables/main_results.md` (never hand-edit)
 - Plots: `scripts/plot_curves.py --tag <tag>`. Tests: `.venv/bin/python -m pytest -q tests/`
 - SVO: `scripts/build_svo_mac.sh`, `scripts/smoke_test_svo.py --envs 12`. Data: `download_tartanair.sh` + `tartan_to_gray.py`, `download_tum.sh`, `download_euroc.sh`
 
