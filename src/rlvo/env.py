@@ -10,6 +10,10 @@ Modifications (see docs/modifications.md for motivation):
   frame_stack k            agent sees the fixed observations of the last k steps (memory without recurrence)
   threshold_action         3rd action: FAST detector threshold in {5, 10, 15, 20, 25}
   augment                  photometric domain randomization on training images
+  residual                 residual RL over SVO's rules: action per frame = follow rule / force keyframe / force no
+                           keyframe (grid size stays at the rules' value); keyframe penalty on ACTUAL keyframes
+  kf_target                constrained RL: the keyframe penalty becomes a Lagrange multiplier (env.kf_lambda) that a
+                           PI controller in train.py adjusts after every rollout so the keyframe rate tracks the target
 """
 from dataclasses import dataclass, field
 from types import SimpleNamespace
@@ -53,6 +57,10 @@ class EnvConfig:
     threshold_action: bool = False
     augment: bool = False
     fix_reset_gt_indexing: bool = False  # reference bug: GT re-init after a failure reads env i's GT for the i-th reset env
+    residual: bool = False               # residual RL over SVO's rules (see module docstring)
+    residual_grid_idx: int = 2           # grid size used when overriding (2 -> 30 px = the rules' tartan/tum value)
+    override_penalty: float = 0.0        # optional cost per override (prefers the rules when in doubt)
+    kf_target: object = None             # None = fixed penalty; float = target keyframe rate (constrained RL)
 
 
 def _invalid_gt(gt):
@@ -93,6 +101,12 @@ class RLVOEnv(VecSVOEnv):
                                             dtype=np.float64)
         self._fixed_hist = np.zeros([num_envs, self.stack, self.agent_obs_dim_fixed])
 
+        self._override = np.zeros(num_envs, dtype=bool)
+        if cfg.residual:
+            assert not cfg.threshold_action, "residual and threshold_action are not combined"
+            # Policy action: 0 follow SVO rule, 1 force keyframe, 2 force no keyframe. Internally (action_dim 2) the
+            # reference still receives [keyframe, grid_idx] and a per-env rules-vs-RL switch (see create_options).
+            self.action_space = spaces.MultiDiscrete([3])
         if cfg.threshold_action:
             self.action_space = spaces.MultiDiscrete([2, 5, 5])
             self.action_space_scale = np.asarray([[1, 0], [5, 20], [5, 5]])
@@ -106,6 +120,8 @@ class RLVOEnv(VecSVOEnv):
         self.augmenter = PhotometricAugmenter(num_envs, seed=seed) if (cfg.augment and mode == 'train') else None
         self.last_info_extra = {}
         self.last_raw_since_kf = np.ones(num_envs)
+        self.kf_lambda = float(cfg.reward.keyframe_reward)   # Lagrange multiplier when cfg.kf_target is set
+        self.kf_integral = 0.0
 
     # ---------------------------------------------------------------- images
     def get_images_pose(self):
@@ -207,7 +223,25 @@ class RLVOEnv(VecSVOEnv):
         self._fixed_hist[:, 0] = obs[:, :f]
         return np.concatenate([self._fixed_hist.reshape(self.num_envs, -1), obs[:, f:]], axis=1)
 
+    def create_options(self, use_RL_actions_bool, use_gt_initialization):
+        use_RL_actions, use_gt_init_poses = super().create_options(use_RL_actions_bool, use_gt_initialization)
+        if self.cfg.residual:
+            use_RL_actions = use_RL_actions * self._override   # "follow rule" -> SVO decides this frame itself
+        return use_RL_actions, use_gt_init_poses
+
+    def _residual_action(self, action):
+        a = np.asarray(action).reshape(self.num_envs, -1)[:, 0].astype(int)
+        self._override = a != 0
+        full = np.zeros([self.num_envs, 2], dtype=np.int64)
+        full[:, 0] = (a == 1)
+        full[:, 1] = self.cfg.residual_grid_idx
+        return full
+
     def step(self, action, use_RL_actions_bool=True, use_gt_initialization=False):
+        if self.cfg.residual:
+            action = self._residual_action(action) if use_RL_actions_bool else np.zeros([self.num_envs, 2], np.int64)
+            if not use_RL_actions_bool:
+                self._override[:] = False
         obs, reward, dones, info, valid = super().step(action, use_RL_actions_bool, use_gt_initialization)
         obs = self._stack(obs, np.asarray(dones, dtype=bool))
         self.last_observations = obs
@@ -273,7 +307,14 @@ class RLVOEnv(VecSVOEnv):
                 self.last_info_extra['rotation_error_deg'] = ang
                 rotation_reward[pos_mask] = -r.rotation_weight * np.minimum(ang, r.rotation_cap_deg) / r.rotation_cap_deg
 
-        keyframe_reward = -action[:, 0] * r.keyframe_reward * valid_stages
+        lam = self.kf_lambda if self.cfg.kf_target is not None else r.keyframe_reward
+        if self.cfg.residual:
+            # penalize ACTUAL keyframes (rule-made or forced), plus an optional cost per override
+            actual_kf = (self.last_raw_since_kf == 0).astype(float)
+            keyframe_reward = -actual_kf * lam * valid_stages \
+                - self.cfg.override_penalty * self._override * valid_stages
+        else:
+            keyframe_reward = -action[:, 0] * lam * valid_stages
         failure_reward = -r.failure_penalty * svo_dones.astype(bool)
 
         reward = position_reward + rotation_reward + keyframe_reward + failure_reward
@@ -283,4 +324,7 @@ class RLVOEnv(VecSVOEnv):
             info[i]['rotation_reward'] = rotation_reward[i]
             info[i]['failure_reward'] = failure_reward[i]
             info[i]['svo_failure'] = bool(svo_dones[i])
+            info[i]['override'] = bool(self._override[i]) and bool(valid_stages[i])
+            info[i]['keyframe_actual'] = bool(self.last_raw_since_kf[i] == 0) and bool(valid_stages[i])
+            info[i]['valid'] = bool(valid_stages[i])
         return reward, info, position_error

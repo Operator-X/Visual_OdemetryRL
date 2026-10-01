@@ -12,6 +12,10 @@ obs_rms_warmup_steps: 0     # 0 = authors (normalization only from PPO iteration
                             # many vec-steps of SVO heuristics before training. Use ~200 for short runs (<30k steps).
 init_policy: null           # e.g. runs/bc_rules_s0: start from that policy + its obs stats (behavior-cloning warm start)
 critic_warmup_iters: 0      # >0: freeze the actor for this many PPO updates so the critic can catch up first
+residual_init_follow_logit: 0   # residual RL: added to the "follow rule" logit at init (2.0 -> ~80% follow)
+kf_lagrange:                # PI controller for the keyframe multiplier (used only if env.kf_target is set)
+  kp: 0.002                 # lambda = lambda0 + kp*error + ki*sum(error); error = keyframe_rate - target per rollout
+  ki: 0.005
 checkpoint_every: 10        # PPO iterations between resumable checkpoints (runs/<name>/checkpoint.pt)
 
 data:
@@ -50,4 +54,8 @@ env:
   frame_stack: 1
   threshold_action: false
   augment: false
+  residual: false                # true = residual RL over SVO's rules (configs/variants/residual.yaml)
+  residual_grid_idx: 2
+  override_penalty: 0.0
+  kf_target: null                # float = constrained RL: keyframe rate target (penalty becomes a PI-controlled multiplier)
   fix_reset_gt_indexing: true    # ON by default (our fix of the reference GT re-init indexing bug, docs/modifications.md); false = authors

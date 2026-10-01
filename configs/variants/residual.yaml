@@ -1,0 +1,6 @@
+# Residual RL over SVO's rules: per frame the agent chooses follow the rule / force a keyframe / force no keyframe.
+# Grid size stays at the rules' value (30). The keyframe penalty applies to ACTUAL keyframes (rule-made or forced).
+# The policy starts biased toward following the rule (~80%), so training starts from the rules' behaviour.
+env:
+  residual: true
+residual_init_follow_logit: 2.0

@@ -216,3 +216,15 @@ above. The user still has to choose what to include (see open decisions).
 2. Which methods to include in the comparative study (see "Catalog of viable AI methods"; suggested: the 9-item mix).
 3. Course deadline and target venue (workshop / RA-L / ICRA-IROS). This sets how deep and long the runs should be.
 4. EuRoC: retry the script, or download via a browser.
+
+## Newer RL techniques that fit our problems (web search, 2026-09-30)
+Our problems: the keyframe rate slides to extremes; the accuracy reward is weak and delayed; the simulator is slow;
+BC -> PPO lost robustness on TartanAir.
+
+| Priority | Technique | Addresses | Effort | Source |
+|---|---|---|---|---|
+| 1 | **Residual RL over SVO's rules:** per frame choose "follow rule" / "force keyframe" / "force no keyframe" (SVO already has a per-env rules-vs-RL switch) | robustness loss, collapse, exploration | small-medium, Python only | [overview](https://www.emergentmind.com/topics/residual-reinforcement-learning-residual-rl), [residual off-policy RL for BC (2025)](https://residual-offpolicy-rl.github.io/) |
+| 2 | **Constrained PPO** (PPO-Lagrangian / RCPO; PID or predictive Lagrangian against oscillation): keyframe rate ~ target, penalty becomes a learned price | the hand-tuned penalty, collapse | medium | [predictive Lagrangian](https://arxiv.org/abs/2501.15217), [PCPO](https://arxiv.org/abs/2508.01883) |
+| 3 | **PQN** (DQN without replay/target net, LayerNorm, lambda-returns, parallel envs), then **IBRL** (BC policy proposes actions for exploration + value targets) | slow simulator, better use of BC | medium each | [PQN](https://arxiv.org/abs/2407.04811), [IBRL](https://arxiv.org/abs/2311.02198) |
+| 4 | **Q-chunking / action chunking** (decide the keyframe pattern for the next k frames; offline-to-online) | delayed reward | medium-large | [Q-chunking, NeurIPS 2025](https://arxiv.org/abs/2507.07969) |
+| 5 | **Return decomposition** (RUDDER and successors: move delayed reward back to the causing decision) | delayed reward (analysis) | large | [RUDDER](https://arxiv.org/abs/1806.07857) |

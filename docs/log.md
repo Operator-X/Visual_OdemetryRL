@@ -98,3 +98,44 @@ bottom. Superseded results mentioned here were moved to `archive/` (see `archive
   better than the paper's RL-SVO), plant +15%, teddy +8%, xyz +79%, room +3%, rpy +7%: the mean is driven by desk/desk2;
   the geometric mean of per-seq ratios is ~+5%. Training: keyframe rate stayed 0.35 -> 0.31 (no collapse), failures
   fell to 1.3/1k (lowest of any run). First result beating the rules on the paper's metric, but 1 seed only.
+- 2026-09-30: **BC -> PPO, 3 seeds** (runs/bc_ppo_s0-2; TUM, ATE on the 5 commonly finished seqs): 0.467/0.501/0.496 =
+  **0.488 +- 0.019 (-4% vs SVO rules 0.510; -9% vs PPO from scratch 0.539 +- 0.015)**. All 3 BC+PPO seeds beat the rules and
+  all 3 from-scratch seeds. Per seq vs rules (seed mean): desk -32% (robust in all seeds), desk2 -6% (seed 0 only),
+  plant +27%, teddy +4%, xyz +90% (inherited from the BC clone: it keyframes ~2x the rules on xyz). Geometric mean of
+  per-seq ratios: 1.094 (same as PPO from scratch 1.092), so the gain is concentrated on high-error seqs. Robustness:
+  6.3/9 finished, 3.8 failures/run (rules 7, 3.0). No keyframe collapse (0.35-0.45). Next idea: BC + keyframe-budget
+  control (the clone keyframes 0.38 on TUM vs rules 0.29).
+- 2026-09-30: **BC -> PPO with keyframe penalty 5e-4** (runs/bc_ppo_kf5e-4_s0, 1 seed): keyframe rate 0.20 (overshoots the
+  rules' 0.29). TUM: xyz 0.084 (from 0.126; rules 0.066), plant 0.308, but robustness drops: 5/9 finished, 6.7
+  failures/run. 1e-4 -> too many keyframes, 5e-4 -> too few: a fixed penalty is hard to set.
+- 2026-09-30: **TartanAir held-out for the BC models** (results/eval/tartanair/bc, 3 reps): BC+PPO is LESS robust than
+  both PPO from scratch and SVO rules: finished 0/0/1 of 6 and 1.7-2.0 failures/traj (scratch 2/1/3 and ~1.0; rules
+  1/6 and 1.5). BC's TUM accuracy gain does not generalize to TartanAir: "promising but dataset-dependent".
+- 2026-09-30: **Literature check** (docs/related_work.md): Nascivera et al. 2026 (same lab) already do RL for FAST
+  threshold / KLT / RANSAC (so threshold_action is not novel); Dai et al. 2026 RL keyframes for feed-forward VO;
+  Pan et al. CVPR 2026 dual-agent VIO. Imitation -> RL is standard (incl. same lab for drone flight); applying it
+  with the VO system's own rules as demonstrator was not found (web/abstracts only, full-text check still needed).
+  EuRoC: the host allowed one request, then rate-limited again; download_euroc.sh keeps backing off.
+- 2026-09-30: **Residual RL over SVO's rules** (configs/variants/residual.yaml; per frame follow rule / force keyframe /
+  force no keyframe; grid stays at the rules' 30; penalty on actual keyframes; follow-rule logit +2 at init). Verified:
+  "always follow" reproduces SVO rules bit-for-bit on TUM; "always no keyframe" -> 0 keyframes, 214 failures.
+  400k, 1 seed (runs/residual_s0): argmax policy ALWAYS follows the rule -> evaluation identical to SVO rules on TUM
+  (0.510, 7/9) and TartanAir (1/6, 1.5 failures/traj). The follow logit barely moved (2.0 -> 1.99). Sampled overrides
+  make it worse (TUM 0.541, 4/9 finished). Safe but no improvement: with the authors' reward the signal is too weak to
+  learn when overriding pays (consistent with the reward diagnosis). Next: residual + a reward that sees delayed
+  benefit (long_window and/or gamma 0.9).
+- 2026-10-01: **Constrained PPO** (configs/variants/constrained_lw.yaml: 20-frame window reward + keyframe-rate target
+  0.30 via a PI-controlled two-sided Lagrange multiplier; gains kp 0.006 / ki 0.002 after two short tuning runs; the
+  first gains 0.002/0.005 overshot to 0.10). 400k, 1 seed (runs/constrained_lw_s0, lagrange.csv): the constraint holds
+  (rate 0.301 +- 0.038 after 100k; lambda ~ 0). TUM: ATE on the 5 common seqs 0.540 (+6% vs rules; plant -15%, desk
+  +10%, teddy +14%), 6/9 finished, 2.7 failures/run. TartanAir held-out: 3/6 finished, 0.83 failures/traj (rules 1/6,
+  1.5; BC+PPO 0/6, 1.83): the most robust method. Trade-off: BC+PPO = best TUM accuracy, worst TartanAir robustness;
+  constrained = best robustness, middling TUM accuracy. Next: BC init + constraint (combination), then seeds.
+- 2026-10-01: **BC init + constrained PPO** (runs/bc_constrained_lw_s0: init_policy=bc_rules_s0, critic warm-up 5,
+  20-frame window, kf target 0.30). The constraint held in training (0.294 +- 0.065 on TartanAir), but on TUM the
+  policy keyframes only ~0.20 (argmax) / 0.21 (sampled) -> poor robustness: 3/9 (argmax) and 5/9 (sampled) finished,
+  7.3 / 5.3 failures/run; TartanAir 0/6, 2.06 failures/traj. Not an argmax artifact. Insight: a keyframe-rate target
+  enforced on the training distribution does not transfer. The right rate depends on motion/scene (TUM handheld needs
+  more keyframes). Every method that cut keyframes lost robustness on the harder-motion dataset. Better: constrain the
+  OUTCOME (failure rate <= X, minimize keyframes) or use a motion-dependent target.
+  Also: constrained_lw sampled on TUM: 5/9 finished, 5.3 failures (argmax 6/9, 2.7).

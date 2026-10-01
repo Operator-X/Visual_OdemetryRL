@@ -80,11 +80,16 @@ class CSVRolloutLogger(BaseCallback):
         self._w = csv.writer(self._f)
         if not append:
             self._w.writerow(["iteration", "timesteps", "wall_s", "reward_per_step", "valid_ratio", "keyframe_rate",
-                              "failures_per_1k", "position_reward", "rotation_reward"])
+                              "failures_per_1k", "position_reward", "rotation_reward", "actual_keyframe_rate",
+                              "override_rate"])
         self._pr = self._rr = 0.0
+        self._kf = self._ov = self._val = 0
 
     def _on_step(self):
         for info in self.locals["infos"]:
+            self._kf += int(info.get("keyframe_actual", False))
+            self._ov += int(info.get("override", False))
+            self._val += int(info.get("valid", False))
             self._fail += int(info.get("svo_failure", False))
             self._pr += info.get("position_reward", 0.0)
             self._rr += info.get("rotation_reward", 0.0)
@@ -99,10 +104,12 @@ class CSVRolloutLogger(BaseCallback):
         self._w.writerow([self.model.num_timesteps // rollout - 1, self.model.num_timesteps,
                           round(time.time() - self.t0, 1), float(buf.rewards.mean()), float(valid.mean()),
                           float((buf.actions[:, :, 0] * valid).sum() / nv), 1000.0 * self._fail / max(self._steps, 1),
-                          self._pr / max(self._steps, 1), self._rr / max(self._steps, 1)])
+                          self._pr / max(self._steps, 1), self._rr / max(self._steps, 1),
+                          self._kf / max(self._val, 1), self._ov / max(self._val, 1)])
         self._f.flush()
         self._fail = self._steps = 0
         self._pr = self._rr = 0.0
+        self._kf = self._ov = self._val = 0
 
 
 class RLVOPPO(PPO):
@@ -139,6 +146,7 @@ def save_checkpoint(model, env, run_dir, wall_s):
         num_timesteps=int(model.num_timesteps), wall_s=float(wall_s),
         obs_rms=_rms_state(env.obs_rms), obs_rms_new=_rms_state(env.obs_rms_new),
         rms_shared=env.obs_rms is env.obs_rms_new,
+        kf_lambda=float(getattr(env, "kf_lambda", 0.0)), kf_integral=float(getattr(env, "kf_integral", 0.0)),
         rng=dict(numpy=np.random.get_state(), torch=torch.get_rng_state()),
     )
     tmp = Path(run_dir) / (CKPT + ".tmp")
@@ -156,6 +164,8 @@ def load_checkpoint(model, env, val_env, run_dir):
         rms.mean, rms.var, rms.count = state[name]["mean"], state[name]["var"], state[name]["count"]
     if state["rms_shared"]:
         env.obs_rms = env.obs_rms_new
+    if "kf_lambda" in state:
+        env.kf_lambda, env.kf_integral = state["kf_lambda"], state["kf_integral"]
     if val_env is not None:
         val_env.obs_rms = env.obs_rms
     np.random.set_state(state["rng"]["numpy"])
@@ -228,6 +238,41 @@ class CriticWarmupCallback(BaseCallback):
         return True
 
 
+class KeyframeLagrangeCallback(BaseCallback):
+    """Constrained RL: after every rollout, set the keyframe penalty (Lagrange multiplier, env.kf_lambda) with a PI
+    controller so the actual keyframe rate (on steps where the agent acts) tracks `target`. Two-sided: lambda can go
+    negative (a keyframe bonus) if the rate falls below target. PI instead of plain gradient ascent on lambda avoids the
+    classic Lagrangian oscillation (Stooke et al. 2020, PID Lagrangian). Writes lagrange.csv."""
+
+    def __init__(self, env, target, kp, ki, path):
+        super().__init__()
+        self.env_ref, self.target, self.kp, self.ki = env, float(target), float(kp), float(ki)
+        self.lam0 = float(env.cfg.reward.keyframe_reward)
+        self._kf = self._val = 0
+        new = not os.path.exists(path)
+        self._f = open(path, "a", newline="")
+        self._w = csv.writer(self._f)
+        if new:
+            self._w.writerow(["timesteps", "keyframe_rate", "error", "integral", "lambda"])
+
+    def _on_step(self):
+        for info in self.locals["infos"]:
+            self._kf += int(info.get("keyframe_actual", False))
+            self._val += int(info.get("valid", False))
+        return True
+
+    def _on_rollout_end(self):
+        rate = self._kf / max(self._val, 1)
+        err = rate - self.target
+        e = self.env_ref
+        e.kf_integral += err
+        e.kf_lambda = self.lam0 + self.kp * err + self.ki * e.kf_integral
+        self._w.writerow([self.model.num_timesteps, round(rate, 4), round(err, 4), round(e.kf_integral, 4),
+                          f"{e.kf_lambda:.6g}"])
+        self._f.flush()
+        self._kf = self._val = 0
+
+
 class CheckpointCallback(BaseCallback):
     """Saves a resumable checkpoint every `every` PPO updates (at rollout start = right after an update)."""
 
@@ -288,6 +333,12 @@ def train(cfg, run_dir, resume=False):
         wall0 = state["wall_s"]
         env.seed(cfg.seed + state["num_timesteps"])   # fresh SVO randomness after resume
         print(f"[resume] from {state['num_timesteps']} steps", flush=True)
+    elif cfg.env.get("residual", False) and cfg.get("residual_init_follow_logit", 0) and not cfg.get("init_policy", None):
+        with torch.no_grad():                    # start close to SVO's rules: bias the "follow rule" logit
+            model.policy.action_net.bias[0] += float(cfg.residual_init_follow_logit)
+        print(f"[residual] follow-rule logit +{cfg.residual_init_follow_logit}", flush=True)
+        if cfg.get("obs_rms_warmup_steps", 0) > 0:
+            warmup_obs_rms(env, val_env, cfg.obs_rms_warmup_steps)
     elif cfg.get("init_policy", None):
         init_from_policy(model, env, val_env, cfg.init_policy)
     elif cfg.get("obs_rms_warmup_steps", 0) > 0:
@@ -299,6 +350,10 @@ def train(cfg, run_dir, resume=False):
                      CheckpointCallback(env, run_dir, cfg.get("checkpoint_every", 10), wall_offset=wall0)]
         if not resuming and cfg.get("critic_warmup_iters", 0) > 0:
             callbacks.append(CriticWarmupCallback(cfg.critic_warmup_iters))
+        if cfg.env.get("kf_target", None) is not None:
+            lg = cfg.get("kf_lagrange", {})
+            callbacks.append(KeyframeLagrangeCallback(env, cfg.env.kf_target, lg.get("kp", 2e-3), lg.get("ki", 5e-3),
+                                                      str(run_dir / "lagrange.csv")))
         model.learn(total_timesteps=remaining, log_interval=None, eval_interval=cfg.val_interval,
                     val_env=val_env, callback=callbacks, reset_num_timesteps=not resuming)
     save_checkpoint(model, env, run_dir, wall0 + time.time() - t0)

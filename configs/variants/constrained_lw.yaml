@@ -1,0 +1,12 @@
+# Constrained PPO: 20-frame-window reward (sees delayed keyframe benefits) + keyframe rate held at 0.30 by a
+# PI-controlled Lagrange multiplier (two-sided; can become a bonus). Without the constraint long_window collapsed to
+# keyframing every frame in 2/3 seeds; with it the agent must learn WHERE to keyframe.
+env:
+  reward:
+    traj_length: 20
+    nr_points_for_align: 5
+  kf_target: 0.30
+# PI gains tuned in two short tests (kp 0.002 / ki 0.005 overshot to 0.10; these damp it to ~0.19-0.45 around 0.30)
+kf_lagrange:
+  kp: 0.006
+  ki: 0.002

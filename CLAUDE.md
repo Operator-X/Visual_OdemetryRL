@@ -20,9 +20,19 @@ every design choice needs a reason we can write up.
   change pushes the keyframe rate to an extreme (penalty 5e-3 -> ~no keyframes; long_window / gamma 0.9-0.99 -> keyframe
   every frame). The keyframe penalty weight decides the extreme. **Next idea: control the keyframe budget directly**
   (constrained RL / Lagrangian penalty to a target rate ~0.25-0.3) or a penalty sweep.
-- **Behavior cloning -> PPO (2026-09-30, 1 seed): first setup to beat SVO's rules on the paper's metric** (TUM ATE on
-  commonly finished seqs 0.467 vs 0.510), without keyframe collapse. Gains concentrated on desk/desk2; worse on
-  plant/teddy/xyz. Needs more seeds. `scripts/bc.py`, then `train.py --set init_policy=runs/bc_rules_s0 critic_warmup_iters=5`.
+- **Behavior cloning -> PPO (3 seeds): beats PPO from scratch (-9%) and SVO's rules (-4%) on the paper's metric in
+  every seed** (TUM ATE 0.488 +- 0.019 vs rules 0.510), no keyframe collapse. Gain concentrated on desk (-32%); worse on
+  plant (+27%) and xyz (+90%, inherited from the clone's extra keyframes); geometric-mean per-seq ratio ~ PPO scratch.
+  BUT on held-out TartanAir BC+PPO is LESS robust than PPO scratch and the rules (all 3 seeds) -> dataset-dependent.
+  A fixed higher keyframe penalty (5e-4) overshoots (keyframe rate 0.20, more failures). Next: target-rate control
+  (constrained RL) or residual RL on top of the rules. Related work: docs/related_work.md. `scripts/bc.py`, then `train.py --set init_policy=runs/bc_rules_s0 critic_warmup_iters=5`.
+- **Residual RL over the rules (1 seed):** learns to always follow the rules (identical results); overrides don't pay
+  with the authors' reward. Reward signal = the bottleneck. Next: residual + long_window / gamma 0.9.
+- **Constrained PPO (PI-Lagrangian keyframe-rate target 0.30, 20-frame window, 1 seed):** the constraint holds (no
+  collapse), most robust method on TartanAir (3/6 finished), but TUM accuracy +6% vs rules.
+- **BC + constrained (1 seed): failed.** The rate target held in training, but on TUM the policy keyframes ~0.20 ->
+  poor robustness. A fixed keyframe-rate target doesn't transfer across datasets. Next idea: constrain the OUTCOME
+  (failure rate) instead, or a motion-dependent target.
 - EuRoC not downloaded: the ETH host rate-limits our IP (see research_plan.md for options).
 
 ## Layout
