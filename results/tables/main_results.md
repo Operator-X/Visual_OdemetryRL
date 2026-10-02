@@ -30,6 +30,7 @@ The final checkpoint alone is a random draw (one run's TUM ATE varies +-7% betwe
 | SVO rules (tuned), repeat 0 | - | 1 | 0.523 | +0.0% | 1.000 | 0 | 7 | 3.0 | 0.30 | 2 | 1.50 |
 | PPO, authors' setup (last 3 of 1.5M) | 3 scenes | 1 x 3 | 0.522 | -0.3% | 0.959 | 0.0 | 6.7 | 3.7 | 0.16 | 2.3 | 1.00 |
 | PPO, authors' setup (all 11 from 270k-1.5M) | 3 scenes | 1 x 11 | 0.517 | -1.2% | 0.956 | 0.0 | 6.9 | 3.2 | 0.17 | 2.1 | 1.26 |
+| PPO, authors' setup (re-run with snapshots) | 3 scenes | 3 x 3 | 0.524 ± 0.005 | +0.1% | 1.083 ± 0.063 | 0.4 ± 0.4 | 6.6 ± 0.8 | 3.3 ± 0.9 | 0.34 ± 0.14 | 2.3 ± 0.6 | 1.35 ± 0.33 |
 | BC -> PPO | 3 scenes | 3 x 3 | 0.516 ± 0.026 | -1.4% | 1.109 ± 0.051 | 0.1 ± 0.2 | 7.0 ± 0.3 | 4.0 ± 0.3 | 0.40 ± 0.05 | 1.1 ± 0.7 | 1.87 ± 0.03 |
 | Residual RL over the rules | 3 scenes | 3 x 3 | 0.523 ± 0.000 | +0.0% | 1.000 ± 0.000 | 0.0 ± 0.0 | 7.0 ± 0.0 | 3.0 ± 0.0 | 0.30 ± 0.00 | 1.9 ± 0.2 | 1.52 ± 0.03 |
 | Constrained PPO (kf rate 0.30) | 3 scenes | 3 x 3 | 0.524 ± 0.015 | +0.2% | 0.993 ± 0.047 | 0.8 ± 1.3 | 6.0 ± 1.5 | 5.9 ± 4.2 | 0.27 ± 0.05 | 2.6 ± 0.8 | 1.20 ± 0.45 |

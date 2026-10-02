@@ -19,9 +19,11 @@ The project is a course project, with the goal of a paper. It runs **natively on
 | Small-scale pilot comparisons (20k steps) | ✅ pipeline validated (archived: superseded by later runs) |
 | TUM-RGBD: SVO rules reproduce the paper's SVO row | ✅ 7/8 sequences finished, 8% mean deviation (tuned SVO settings) |
 | EuRoC evaluation | ⏳ download blocked by the host's rate limit |
-| First PPO training (400k / 1.5M steps) | ✅ as robust as tuned SVO rules with ~half the keyframes, ~5-8% less accurate |
-| Reward diagnosis + reward experiment (3 seeds) | ✅ no reward variant beats the baseline yet; keyframe rate collapses to extremes |
-| Keyframe-budget control (constrained RL) | ⏳ next |
+| PPO, authors' setup (3 seeds, 400k; 1 seed 1.5M) | ✅ matches SVO's tuned rules (checkpoint-averaged); no consistent gain |
+| Reward diagnosis + reward experiment | ✅ reward is weak/local/delayed; reward changes push the keyframe rate to extremes |
+| Fixes: behavior cloning -> PPO, residual RL, constrained PPO, shadow-SVO relative reward, more data | ✅ none beats the rules beyond noise (3 seeds where available) |
+| Bias audit + checkpoint-averaged re-scoring | ✅ final-checkpoint scores are +-7% random draws; 3 earlier claims overturned |
+| Write-up | ⏳ outline in `writeup/outline.md` |
 
 ## What we changed relative to the authors
 
@@ -66,36 +68,35 @@ grid-searched too). The result is saved as `svo_env/param/tum_tuned.yaml` and is
 | floor | fails | fails | | | | |
 
 ## Training results so far
-TUM-RGBD, same tuned SVO settings for everyone, ATE on the 5 sequences every method finishes (3 repeats):
+Checkpoint-averaged (mean over the last 3 policy snapshots per seed, then over seeds). TUM-RGBD, same tuned SVO
+settings for everyone; ATE on the 5 sequences every method finishes; "per seq" = geometric mean of the per-sequence ATE
+ratio to the rules (1.00 = equal). Full table: [`results/tables/main_results.md`](results/tables/main_results.md).
 
-| Method | ATE [m] | Keyframe rate |
-|---|---|---|
-| SVO rules | **0.510** | 0.29 |
-| PPO baseline (400k steps, 3 seeds) | 0.539 ± 0.015 | 0.19-0.40 |
-| PPO + 20-frame reward window (3 seeds) | 0.572 ± 0.044 | 0.23-1.00 |
+| Method (3 Easy scenes, 400k steps) | Seeds | TUM ATE vs rules | Per seq | Keyframe rate | TartanAir failures/traj |
+|---|---|---|---|---|---|
+| SVO rules (tuned) | - | 0.523 m | 1.00 | 0.30 | 1.50 |
+| PPO, authors' setup | 3 | +0.1% | 1.08 ± 0.06 | 0.34 ± 0.14 | 1.35 ± 0.33 |
+| Behavior cloning -> PPO | 3 | -1.4% ± 5% | 1.11 ± 0.05 | 0.40 | 1.87 |
+| Residual RL over the rules | 3 | 0.0% | 1.00 | 0.30 | 1.52 |
+| Constrained PPO (keyframe rate 0.30) | 3 | +0.2% ± 3% | 0.99 ± 0.05 | 0.27 | 1.20 ± 0.45 |
 
-- **Reward diagnosis:** the authors' reward is informative but weak (99.7% of steps get a positive reward on TUM),
-  measures local error rather than drift, and a keyframe's benefit arrives 4-5 frames later, heavily discounted at
-  gamma=0.6.
-- **Every reward change pushes the keyframe rate to an extreme** (the paper's 5e-3 penalty -> almost no keyframes;
-  longer horizons or windows -> a keyframe on every frame). The single keyframe-penalty weight decides which, which
-  motivates controlling the keyframe budget directly.
-- Single-seed results were misleading here: a 1-seed win of the 20-frame window did not hold over 3 seeds.
+**Bottom line so far: at ~1.6% of the paper's training steps, RL keyframe selection converges to (but does not beat)
+SVO's hand-tuned rules.** The paper reports -14.5% ATE vs its SVO at 25M steps and 8x our batch size.
+## Findings so far (small scale)
+- **Evaluation noise can manufacture gains.** One run's TUM ATE moves +-7% between consecutive policy snapshots with
+  no trend; seeds differ as much. Final-checkpoint, single-seed scores produced three claims we later overturned
+  (PPO "5-8% worse", BC -> PPO "4% better", PPO "half the keyframes").
+- **The authors' ATE can be gamed by failing early** (it only covers the segment before the first tracking failure:
+  0.17 m at 6% coverage in a pilot). We also report finished sequences, failures and coverage.
+- **A bug in the reference re-initialization after tracking failures** inflated failure counts ~11x on TUM (fixed by default).
+- **The reward is weak, local and delayed:** 99.7% of steps get a positive reward on TUM; it measures 5-frame error, not
+  drift; a keyframe's benefit arrives 4-5 frames later, discounted away at gamma=0.6.
+- **Reward changes push the keyframe rate to an extreme** (paper's 5e-3 penalty -> almost no keyframes; longer
+  windows/horizons -> a keyframe every frame). Constraining the rate (Lagrangian) prevents the collapse.
+- **Snapshot trends:** the authors' PPO is flat from 270k to 1.5M steps; residual RL stays exactly at the rules;
+  only constrained PPO kept improving (in robustness) up to 400k.
 
-## Early findings (small scale, not conclusions)
-Pilot: 20k training steps per variant (<0.1% of the paper's budget), 1 seed, 6 held-out TartanAir trajectories.
-These pilots are archived (superseded): [`archive/`](archive/README.md).
-
-- **The authors' ATE can be gamed by failing early.** It only covers the segment before the first tracking failure.
-  A policy that loses tracking immediately gets a tiny, flattering ATE (0.17 m at 6% coverage). We therefore also report
-  `ate_all` (every tracked segment), coverage, tracked fraction and failure count.
-- **Keyframe selection dominates robustness.** Policies that stop keyframing lose tracking constantly. Keyframing on
-  every frame is as robust as SVO's rules, but slower.
-- **The paper's keyframe penalty (5e-3) drives the policy to almost no keyframes** in both pilots (34 failures per
-  trajectory vs 9.7 for SVO's rules). This supports the smaller value in the released code.
-- The robustness-oriented rewards (`failure_penalty`, `normalized_error`, `gamma_0.99`) learn *more* keyframes, and
-  `failure_penalty` had the fewest failures (6.0 vs 9.7 per trajectory). This is one seed, so it's a hint only.
-
+Throughput on the M3 Pro: 400k training steps take ~13 minutes; the paper's 25M steps would take ~11.5 hours.
 ## Quick start (macOS, Apple Silicon)
 
 ```bash
@@ -131,11 +132,12 @@ reference/rl_vo/      official code, read-only (uzh-rpg/rl_vo @ c273182)
 third_party/svo-lib/  our patched SVO (every change marked [rlvo])
 src/rlvo/             env (reference env + switches), data, train, evaluate
 configs/              base.yaml (authors' setup scaled to 12 envs) + variants/
-scripts/              build, data prep, train, evaluate, compare, plots
+scripts/              build, data prep, train, evaluate, compare, plots; experiments/ = one runner per experiment
 tests/                equivalence with the reference + sanity checks
 docs/                 modifications.md (every change + bugs), research_plan.md (next steps), log.md (history)
 paper/notes.md        paper summary, hyperparameters, paper-vs-code discrepancies
-results/              current tables and figures (tracked); runs/ and data/ are not tracked
+results/              current tables, figures, evaluations (tracked; index in results/README.md); runs/, data/ not tracked
+writeup/              paper / course-report outline
 archive/              superseded results, with a README explaining why
 CLAUDE.md             working notes and conventions for this project
 ```
@@ -143,13 +145,15 @@ CLAUDE.md             working notes and conventions for this project
 ## Deviations from the authors (compute)
 100 parallel envs -> 12. PPO batch 25,000 -> 3,000 (still full batch). A bug in the reference re-initialization after
 tracking failures is fixed by default (`env.fix_reset_gt_indexing`). All of TartanAir -> 3 Easy scenes
-(18 train / 6 held-out trajectories). Short pilot budgets so far. SVO threads 8 -> 12.
+(18 train / 6 held-out trajectories; `data.train_include`), later 7 scenes incl. Hard (89 train) for the `*_v2` runs.
+400k steps per run (1.6% of 25M). SVO threads 8 -> 12.
 
 ## Next steps
-1. Download EuRoC (the paper's main real-world benchmark; the ETH host currently rate-limits us) and evaluate there.
-2. Choose a coverage-aware headline metric for the paper.
-3. Multi-seed runs (200k–1M steps) of the baseline and the most promising variants.
-4. Larger extensions: recurrent policy, other VO backends.
+1. EuRoC as a clean test set (the paper's main benchmark; the ETH host rate-limits us, browser download needed).
+2. Decide the paper framing: replication + evaluation study (current evidence) vs. a method that beats the rules
+   (candidate: shadow-SVO relative reward with a keyframe budget; needs 3+ seeds).
+3. Optional scale test: the authors' batch size (25k) and several million steps, to see whether scale explains the
+   paper's gain.
 
 ## Citation and license
 Please cite the original paper and SVO (see `reference/rl_vo/README.md`). The reference code and our derived code

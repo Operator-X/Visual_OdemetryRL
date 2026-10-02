@@ -209,3 +209,17 @@ bottom. Superseded results mentioned here were moved to `archive/` (see `archive
   - **Bottom line: no method beats SVO's tuned rules on TUM accuracy beyond noise.** The robust finding is efficiency/
     robustness: PPO matches the rules with ~half the keyframes and fewer TartanAir failures.
   - Also: eval-seed noise for the rules alone (teddy 0.776 repeat 0 vs 0.659 repeats 1-2).
+- **Data-scope pitfall (caught):** after the 7-scene download, `train.py` trains on every non-held-out trajectory on disk
+  (89, incl. Hard), so re-running a 3-scene experiment silently used 7 scenes. New option `data.train_include`
+  (base.yaml, default null = all) restricts training, e.g. to [japanesealley/Easy, carwelding/Easy, westerndesert/Easy]
+  (= 18 trajectories, the original set). Also: the reference lists training trajectories in raw glob (filesystem)
+  order; since the val_include change ours are sorted, so the initial env -> trajectory assignment differs from runs
+  before f2bb4b5 (iteration-0 reward differs; later trajectories are sampled randomly). Kept sorted (portable).
+- **Authors' PPO, 3 seeds with snapshots (ppo_snap_s0-2, 3 Easy scenes via data.train_include, 400k, ~13 min/seed):**
+  checkpoint-averaged (last 3 snapshots, repeat 0): TUM ATE 0.524 +- 0.005 (rules 0.523, +0.1%); per-sequence geometric
+  ratio 1.08 +- 0.06 (seeds 1.06 / 1.04 / 1.15, i.e. slightly WORSE per sequence); keyframe rate 0.22 / 0.30 / 0.49
+  (rules 0.30); TUM finished 7 / 7 / 5.7 (rules 7); TartanAir core failures/traj 1.67 / 1.00 / 1.39 (rules 1.50).
+  **The "half the keyframes, more robust" result was a single-seed property of ppo15 (kf 0.16).** Across seeds the
+  learned keyframe rate is seed-dependent and on average equal to the rules'; accuracy equal on the paper-style mean,
+  slightly worse per sequence; robustness within noise of the rules. Conclusion: at our scale the authors' PPO
+  reproduces SVO's tuned rules, no consistent gain in accuracy, keyframes or robustness.

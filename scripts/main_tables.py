@@ -79,6 +79,8 @@ SNAP_METHODS = [
      ["iter_00330", "iter_00360", "final"], "3 scenes"),
     ("PPO, authors' setup (all 11 from 270k-1.5M)", ["ppo15_s0"], {"tum": "ppo15_1p5M", "tartanair": "snapshots/final"},
      [f"iter_{i:05d}" for i in range(90, 361, 30)] + ["final"], "3 scenes"),
+    ("PPO, authors' setup (re-run with snapshots)", [f"ppo_snap_s{s}" for s in range(3)],
+     {"tum": "ppo_snap", "tartanair": "ppo_snap"}, LAST3, "3 scenes"),
     ("BC -> PPO", [f"bc_ppo_s{s}" for s in range(3)], {"tum": "bc", "tartanair": "bc"}, LAST3, "3 scenes"),
     ("Residual RL over the rules", [f"residual_s{s}" for s in range(3)], {"tum": "residual", "tartanair": "residual"},
      LAST3, "3 scenes"),

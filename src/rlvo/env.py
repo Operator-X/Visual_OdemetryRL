@@ -155,7 +155,8 @@ class ShadowSVO:
 
 class RLVOEnv(VecSVOEnv):
     def __init__(self, params_yaml_path, calib_yaml_path, dataset_dir, num_envs, mode, cfg: EnvConfig,
-                 initialize_glog=False, val_traj_ids=None, dataset='tartanair', seed=0, extra_val=(), val_include=None):
+                 initialize_glog=False, val_traj_ids=None, dataset='tartanair', seed=0, extra_val=(), val_include=None,
+                 train_include=None):
         self.cfg = cfg
         r = cfg.reward
         ref_reward = SimpleNamespace(align_reward=r.align_reward, keyframe_reward=r.keyframe_reward,
@@ -166,7 +167,8 @@ class RLVOEnv(VecSVOEnv):
             # Built BEFORE the reference __init__, which is told an unknown dataset name so it keeps this loader
             # (the reference loader would assert on the authors' fixed val split).
             self.dataloader = TartanLoaderK(dataset_dir, mode, num_envs, val_traj_ids,
-                                            n_future=cfg.critic_horizon, extra_val=extra_val, val_include=val_include)
+                                            n_future=cfg.critic_horizon, extra_val=extra_val, val_include=val_include,
+                                            train_include=train_include)
             ref_dataset = '__rlvo_prebuilt__'
         super().__init__(params_yaml_path, calib_yaml_path, dataset_dir, num_envs, mode, ref_reward,
                          initialize_glog=initialize_glog, val_traj_ids=val_traj_ids, dataset=ref_dataset)

@@ -27,6 +27,9 @@ data:
   # Evaluation set stays FIXED when more data is downloaded: only held-out trajectories matching these are evaluated
   # (= the same 6 as before). Other held-out trajectories (e.g. DPVO test split in new scenes / Hard) are not trained on.
   val_include: [japanesealley/Easy, carwelding/Easy, westerndesert/Easy]
+  # Training trajectories: null = every non-held-out trajectory on disk (7 scenes incl. Hard since 2026-10-01).
+  # [japanesealley/Easy, carwelding/Easy, westerndesert/Easy] = the original 3-scene set (all runs before *_v2).
+  train_include: null
 
 agent:                       # authors' values
   n_epochs: 10

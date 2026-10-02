@@ -46,15 +46,17 @@ def make_envs(cfg, val=True):
     extra_val = list(cfg.data.get("extra_val_trajs", []))
     val_include = cfg.data.get("val_include", None)
     val_include = None if val_include is None else list(val_include)
-    train_trajs, val_trajs = split_trajectories(data, extra_val, val_include)
+    train_include = cfg.data.get("train_include", None)
+    train_include = None if train_include is None else list(train_include)
+    train_trajs, val_trajs = split_trajectories(data, extra_val, val_include, train_include)
     if cfg.n_envs > len(train_trajs):
         raise SystemExit(f"n_envs={cfg.n_envs} > {len(train_trajs)} training trajectories (TartanLoader needs <=)")
     env = RLVOEnv(params, calib, data, cfg.n_envs, 'train', ecfg, initialize_glog=True, seed=cfg.seed,
-                  extra_val=extra_val, val_include=val_include)
+                  extra_val=extra_val, val_include=val_include, train_include=train_include)
     val_env = None
     if val:
         val_env = RLVOEnv(params, calib, data, len(val_trajs), 'val', ecfg, initialize_glog=False, seed=cfg.seed,
-                          extra_val=extra_val, val_include=val_include)
+                          extra_val=extra_val, val_include=val_include, train_include=train_include)
     return env, val_env
 
 

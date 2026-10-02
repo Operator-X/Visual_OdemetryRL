@@ -9,39 +9,25 @@ then extend it. A **course project** aimed at a **publishable paper** (possibly 
 publishable even if nothing beats the baseline). Results must be reproducible and comparable to the paper's tables, and
 every design choice needs a reason we can write up.
 
-## Current state (2026-09-29)
-- **Setup validated on real data:** SVO's own rules on TUM-RGBD reproduce the paper's Table 2 SVO row (7/8 sequences
-  finished, 8% mean deviation) with `tum_tuned.yaml`. Reference: `results/eval/tum/svo_rules_std`.
-- **2026-10-02 re-scoring (checkpoint-averaged, see docs/log.md): no method beats the tuned rules on TUM accuracy
-  beyond noise; final-checkpoint numbers are +-7% random draws. Claims below marked (final ckpt) are superseded.**
-- **PPO (authors' setup + our fixes):** as robust as the tuned SVO rules with ~half the keyframes; (final ckpt) ~5-8% less
-  accurate, but checkpoint-averaged ~= rules. Longer training (1.5M) does not help: reward/step is flat, the keyframe rate keeps falling.
-- **Reward diagnosis:** the authors' reward is informative but weak (99.7% of steps positive on TUM), measures local
-  (5-frame) error rather than drift, and a keyframe's benefit comes 4-5 frames later (discounted away at gamma=0.6).
-- **Reward experiment (reward1, 3 seeds for baseline/long_window):** no variant beats the baseline robustly. Every reward
-  change pushes the keyframe rate to an extreme (penalty 5e-3 -> ~no keyframes; long_window / gamma 0.9-0.99 -> keyframe
-  every frame). The keyframe penalty weight decides the extreme. **Next idea: control the keyframe budget directly**
-  (constrained RL / Lagrangian penalty to a target rate ~0.25-0.3) or a penalty sweep.
-- **Behavior cloning -> PPO (3 seeds):** (final ckpt) beat PPO from scratch (-9%) and SVO's rules (-4%); checkpoint-averaged
-  only -1.4% and 11% WORSE per sequence (geometric mean) -> not a real gain (TUM ATE 0.488 +- 0.019 vs rules 0.510), no keyframe collapse. Gain concentrated on desk (-32%); worse on
-  plant (+27%) and xyz (+90%, inherited from the clone's extra keyframes); geometric-mean per-seq ratio ~ PPO scratch.
-  BUT on held-out TartanAir BC+PPO is LESS robust than PPO scratch and the rules (all 3 seeds) -> dataset-dependent.
-  A fixed higher keyframe penalty (5e-4) overshoots (keyframe rate 0.20, more failures). Next: target-rate control
-  (constrained RL) or residual RL on top of the rules. Related work: docs/related_work.md. `scripts/bc.py`, then `train.py --set init_policy=runs/bc_rules_s0 critic_warmup_iters=5`.
-- **Residual RL over the rules (3 seeds):** learns to always follow the rules (identical results); overrides don't pay
-  with the authors' reward. Reward signal = the bottleneck. Next: residual + long_window / gamma 0.9.
-- **Constrained PPO (PI-Lagrangian keyframe-rate target 0.30, 20-frame window, 3 seeds): best all-rounder.** TUM
-  0.518 +- 0.019 (rules 0.510, within noise; PPO scratch 0.539), TartanAir 2.3/6 finished, 1.00 failures/traj (rules 1, 1.50).
-- **BC + constrained (1 seed): failed.** The rate target held in training, but on TUM the policy keyframes ~0.20 ->
-  poor robustness. A fixed keyframe-rate target doesn't transfer across datasets. Next idea: constrain the OUTCOME
-  (failure rate) instead, or a motion-dependent target.
-- **More data (7 scenes, 1 seed):** no clear accuracy gain; PPO from scratch learns to keyframe EVERY frame and becomes
-  the most robust on hard held-out TartanAir (7/13 vs rules 2/13) at ~14% more SVO time; constrained v2 matches the
-  rules on TUM (0.509) but is less robust on hard motion. Next: failure-rate (outcome) constraint.
-- **Shadow-SVO relative reward (new, 1 seed, 7 scenes):** reward = agent minus a shadow SVO running the rules on the same
-  images (exact mirror verified). Learns to beat the rules on training data and has the fewest failures on TartanAir,
-  but by keyframing much more -> worse on slow TUM seqs. Next: shadow reward + keyframe budget taken from the shadow.
-- EuRoC not downloaded: the ETH host rate-limits our IP (see research_plan.md for options).
+## Current state (2026-10-02) — full history in docs/log.md
+- **Setup validated:** SVO's own rules on TUM-RGBD reproduce the paper's Table 2 SVO row (7/8 finished, 8% mean
+  deviation) with `tum_tuned.yaml`. Reference: `results/eval/tum/svo_rules_std`.
+- **Headline (checkpoint-averaged, `results/tables/main_results.md` part 2): no method beats SVO's tuned rules beyond
+  noise.** Final-checkpoint scores are +-7% random draws; re-scoring overturned 3 earlier claims (PPO "5-8% worse",
+  BC -> PPO "-4%", PPO "half the keyframes").
+- **Authors' PPO (ppo_snap_s0-2, 3 seeds, 3 Easy scenes, 400k):** = rules (TUM ATE +0.1%, per-seq 1.08; keyframe rate
+  seed-dependent 0.22-0.49; TartanAir failures within noise). Flat from 270k to 1.5M (ppo15).
+- **Reward diagnosis:** weak (99.7% of steps positive on TUM), local (5-frame error, not drift), delayed (keyframe benefit
+  4-5 frames later, discounted at gamma=0.6). Reward changes push the keyframe rate to an extreme (penalty 5e-3 -> none;
+  long window / gamma 0.9-0.99 -> every frame).
+- **Fixes tried (all ~= rules or worse, checkpoint-averaged):** BC -> PPO (3 seeds; -1.4% mean but 11% worse per seq, less
+  robust on TartanAir); residual RL (3 seeds; always follows the rules); constrained PPO with a PI-Lagrangian keyframe
+  target 0.30 (3 seeds; = rules, no collapse, the only method still improving at 400k, in robustness); BC + constrained
+  (1 seed; worse); 7 scenes (1 seed each; PPO keyframes every frame); shadow-SVO relative reward (1 seed; beats the rules
+  on training data but by keyframing ~85%, worse on TUM).
+- **Candidate paper framing:** replication + evaluation study (RL converges to the tuned rules at small scale; evaluation
+  practice can manufacture +-5-10% gains). Open: EuRoC (clean test set; ETH host rate-limits us, browser download),
+  shadow reward + keyframe budget, scale test (authors' batch size).
 
 ## Layout
 ```
@@ -50,10 +36,11 @@ reference/    official code (uzh-rpg/rl_vo @ c273182). READ-ONLY.
 third_party/svo-lib/  our patched SVO; every change marked `[rlvo]`
 src/rlvo/     env.py (RLVOEnv = reference env + switches), data.py, train.py, evaluate.py
 configs/      base.yaml (authors' setup scaled to 12 envs + our fixes) + variants/<name>.yaml (one change each)
-scripts/      build, data prep, train, evaluate, compare, plot, svo_param_search, reward_diagnosis
+scripts/      build, data prep, train, evaluate, compare, plot, svo_param_search, reward_diagnosis, bc, main_tables,
+              eval_snapshots + snapshot_trends; experiments/ = one runner script per experiment (reproducible)
 tests/        test_env.py: env == reference with all switches off; sanity checks
 docs/         research_plan.md, log.md, modifications.md
-results/      current tables/figures/evals (tracked). archive/ = superseded results (tracked, see archive/README.md)
+results/      current tables/figures/evals (tracked; index + protocol in results/README.md). archive/ = superseded results
 runs/         training runs (gitignored); runs/archive/ old runs, runs/logs/ run logs
 data/         datasets (gitignored): TartanAir (7 scenes after the 2026-10-01 download), TUM-RGBD (9 seqs), calibration/, logs/, _zips/
 writeup/      outline.md (paper/course-report outline, contributions, planned figures, open items)
@@ -76,6 +63,8 @@ notebooks/    empty for now
 - **Headline metrics:** `finished` (sequences with zero failures, the paper's criterion) and `ate_common` (ATE on the
   sequences EVERY method/seed finishes). The authors' first-segment ATE and our `ate_all` can both be gamed by failing
   (early failure -> short easy segment; many failures -> many easy short segments). Always report failures/coverage.
+- **TartanAir training data:** `data.train_include` (null = all 89 non-held-out trajectories on disk, 7 scenes incl.
+  Hard). To reproduce 3-scene experiments set `data.train_include=[japanesealley/Easy,carwelding/Easy,westerndesert/Easy]`.
 - **TartanAir evaluation set is FIXED** (`data.val_include` in base.yaml = the 6 held-out Easy trajectories of our first
   3 scenes), even as more scenes are downloaded. Other held-out trajectories (DPVO test split in new scenes / Hard) are
   never trained on; `evaluate.py --tartan-val all` evaluates on all of them (results tag `<tag>_valall`).

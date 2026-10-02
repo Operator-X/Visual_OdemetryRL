@@ -22,7 +22,8 @@ rules on the same images. [Final claims depend on the remaining experiments.]
 
 ## Contributions (current, to be confirmed)
 1. **Replication at small scale** (native Apple Silicon build, ~1.6% of the paper's training steps): what reproduces
-   (efficiency: robustness with fewer keyframes; SVO baseline within 8% of the paper) and what does not (the accuracy gain).
+   (SVO baseline within 8% of the paper; the RL agent matches the tuned rules, 3 seeds, checkpoint-averaged) and what
+   does not (the accuracy gain; a consistent keyframe reduction -- seed-dependent, 0.22-0.49 vs rules 0.30).
 2. **Diagnosis of the RL signal:** weak (difficulty-dominated), local (5-frame window vs trajectory drift), delayed
    (keyframe benefit after 4-5 frames, discounted away at gamma=0.6). Quantified with `scripts/reward_diagnosis.py`.
 3. **Keyframe-collapse phenomenon:** across every reward change the keyframe rate slides to an extreme; the keyframe

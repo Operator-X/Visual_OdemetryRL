@@ -17,6 +17,11 @@ Evaluation repeat 0 only (deterministic actions); multi-seed methods are average
 | PPO, authors' setup (1.5M steps) | 1 | 990 | 0.523 | 6.0 | 4.0 | 0.16 | 3.0 | 1.17 | 0.21 |
 | PPO, authors' setup (1.5M steps) | 1 | 1080 | 0.476 | 7.0 | 4.0 | 0.16 | 2.0 | 0.83 | 0.23 |
 | PPO, authors' setup (1.5M steps) | 1 | 1500 | 0.566 | 7.0 | 3.0 | 0.15 | 2.0 | 1.00 | 0.20 |
+| PPO, authors' setup (3 seeds) | 3 | 90 | 0.535 | 6.7 | 4.0 | 0.74 | 2.0 | 1.72 | 0.57 |
+| PPO, authors' setup (3 seeds) | 3 | 180 | 0.522 | 6.3 | 4.3 | 0.57 | 3.0 | 1.06 | 0.41 |
+| PPO, authors' setup (3 seeds) | 3 | 270 | 0.550 | 7.3 | 2.3 | 0.40 | 2.3 | 1.28 | 0.35 |
+| PPO, authors' setup (3 seeds) | 3 | 360 | 0.488 | 5.3 | 4.3 | 0.31 | 2.3 | 1.50 | 0.30 |
+| PPO, authors' setup (3 seeds) | 3 | 400 | 0.506 | 7.0 | 3.3 | 0.30 | 2.3 | 1.28 | 0.31 |
 | BC -> PPO | 3 | 90 | 0.534 | 7.3 | 3.3 | 0.41 | 1.7 | 1.67 | 0.33 |
 | BC -> PPO | 3 | 180 | 0.481 | 7.3 | 4.0 | 0.40 | 1.3 | 1.83 | 0.35 |
 | BC -> PPO | 3 | 270 | 0.527 | 7.3 | 4.0 | 0.40 | 1.0 | 1.89 | 0.34 |

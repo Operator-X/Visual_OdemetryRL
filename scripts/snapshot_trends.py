@@ -25,6 +25,7 @@ COMMON = ["desk", "desk2", "plant", "teddy", "xyz"]
 # method label -> runs; final-evaluation folder per dataset
 METHODS = {
     "PPO, authors' setup (1.5M steps)": (["ppo15_s0"], {"tum": "ppo15_1p5M", "tartanair": "snapshots/final"}),
+    "PPO, authors' setup (3 seeds)": ([f"ppo_snap_s{s}" for s in range(3)], {"tum": "ppo_snap", "tartanair": "ppo_snap"}),
     "BC -> PPO": ([f"bc_ppo_s{s}" for s in range(3)], {"tum": "bc", "tartanair": "bc"}),
     "Residual RL": ([f"residual_s{s}" for s in range(3)], {"tum": "residual", "tartanair": "residual"}),
     "Constrained PPO": ([f"constrained_lw_s{s}" for s in range(3)], {"tum": "constrained", "tartanair": "constrained"}),

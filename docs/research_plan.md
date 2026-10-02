@@ -1,6 +1,11 @@
 # Research plan (written 2026-09-27, to continue from here)
 
-## Where we are
+## Where we are (updated 2026-10-02)
+- **Current headline:** checkpoint-averaged over 3 seeds, no method beats SVO's tuned rules beyond noise; the authors'
+  PPO reproduces the rules (`results/tables/main_results.md` part 2). See "Evaluation protocol from now on" below and
+  CLAUDE.md "Current state". The bullets below are the 2026-09 status, kept for the record.
+
+### Status as of 2026-09-29
 - The foundation is **validated against the paper on real data**. SVO's own rules on TUM-RGBD reproduce the paper's
   Table 2 SVO row: 7/8 sequences finished, 8% mean deviation (`tum_tuned.yaml`, the standard for `--dataset tum`).
 - Pipeline ready: 11 modifications as config switches, training with resume, evaluation (argmax + stochastic,

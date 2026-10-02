@@ -14,18 +14,21 @@ def _matches(traj, patterns):
     return any(p in traj for p in patterns)
 
 
-def split_trajectories(data_dir, extra_val=(), val_include=None):
+def split_trajectories(data_dir, extra_val=(), val_include=None, train_include=None):
     """(train, val) trajectory dirs.
 
     Held out (never trained on) = the authors' (DPVO) test split + our extra held-out trajectories.
     val = the held-out ones that also match `val_include` (None = all held out). Held-out trajectories outside
     val_include are simply unused, so the evaluation set stays fixed when more data is downloaded.
+    train_include (None = everything not held out) restricts training to matching trajectories, e.g. the original
+    3 Easy scenes, so older experiments can be reproduced after more data was downloaded.
     """
     keys = list(test_split) + list(extra_val)
     trajs = sorted(str(t) for t in __import__("pathlib").Path(data_dir).glob("*/*/P*"))
     held_out = [t for t in trajs if _matches(t, keys)]
     val = [t for t in held_out if val_include is None or _matches(t, val_include)]
-    return [t for t in trajs if t not in held_out], val
+    train = [t for t in trajs if t not in held_out and (train_include is None or _matches(t, train_include))]
+    return train, val
 
 
 class TartanLoaderK(TartanLoader):
@@ -35,8 +38,9 @@ class TartanLoaderK(TartanLoader):
     """
 
     def __init__(self, root_path, mode, num_envs, val_traj_ids=None, traj_name=None, n_future=1, extra_val=(),
-                 val_include=None):
+                 val_include=None, train_include=None):
         self.n_future = n_future
+        self.train_include = None if train_include is None else list(train_include)
         self.extra_val = list(extra_val)
         self.val_include = None if val_include is None else list(val_include)
         super().__init__(root_path, mode, num_envs, val_traj_ids, traj_name)
@@ -46,7 +50,7 @@ class TartanLoaderK(TartanLoader):
 
     def extract_trajectories(self):
         # Reference logic + val_include filter (the reference asserts before we could filter, so reimplemented).
-        train, val = split_trajectories(self.root_path, self.extra_val, self.val_include)
+        train, val = split_trajectories(self.root_path, self.extra_val, self.val_include, self.train_include)
         if self.mode == 'train':
             self.trajectories_paths = train
         elif self.mode == 'val':

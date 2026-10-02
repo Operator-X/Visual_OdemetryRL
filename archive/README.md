@@ -10,3 +10,8 @@
 
 The matching training runs are in `runs/archive/` (not in git). Details of the bugs and fixes: `docs/modifications.md`.
 Chronology: `docs/log.md`.
+
+## Added 2026-10-02
+| Path | What | Why superseded |
+|---|---|---|
+| `results/eval/tum/ppo15`, `ppo15_stoch`, `results/tables/ppo15_tum.*` | authors' PPO (1 seed) evaluated at its final checkpoint after the first ~15-min run | final-checkpoint scores are +-7% random draws; superseded by `results/eval/tum/ppo15_1p5M` + snapshot evaluations and the checkpoint-averaged table in `results/tables/main_results.md` |
